@@ -5,7 +5,7 @@ using namespace cv;
 #include <iostream>
 using namespace std;
 
-#include "XNN.h"
+#include "xnn.h"
 #include "profile.h"
 
 using namespace nn;
@@ -105,6 +105,7 @@ int main(int argc, char **argv)
         
         if (g%50==0)
         {
+            PROFILEX("report")
             float acc = accuracy(labels, res);
             cout << g << " " << e2 << " " << acc / res.size() << endl;
             if (data[0].cols>7)

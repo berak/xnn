@@ -5,7 +5,7 @@ using namespace cv;
 #include <fstream>
 using namespace std;
 
-#include "XNN.h"
+#include "xnn.h"
 #include "profile.h"
 
 namespace nn {

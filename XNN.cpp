@@ -4,7 +4,7 @@ using namespace cv;
 #include <iostream>
 using namespace std;
 
-#include "XNN.h"
+#include "xnn.h"
 #include "profile.h"
 
 namespace nn {
