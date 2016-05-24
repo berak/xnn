@@ -87,9 +87,8 @@ int main(int argc, char **argv)
 
     Ptr<Network> nn = nn::createNetwork(network);
     cout << nn->desc() << endl;
-    //bool ok = nn->setup(problem->inputSize(), problem->outputSize());
     
-    for (int g=1; g<ngen; g++)
+    for (int g=1; g<=ngen; g++)
     {
         PROFILEX("generation")
         Volume data, res,res1,labels;
