@@ -191,12 +191,12 @@ struct Tv10Faces : Problem
     }
     virtual Size inputSize() { return Size(pSiz,pSiz); } 
     virtual Size outputSize() { return Size(1,nPers); } 
-    virtual String desc() {return format("Tv10FFaces(%d,%d,%d))",pSiz,nPers,nImg);}
+    virtual String desc() {return format("Tv10Faces(%d,%d,%d))",pSiz,nPers,nImg);}
 };
 
 struct MNist : Problem
 {
-    vector<cv::Mat> vec;
+    vector<Mat> vec;
     vector<char> lab;
 
     MNist() // todo: currently, we're only using the testset.

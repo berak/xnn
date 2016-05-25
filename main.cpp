@@ -10,36 +10,6 @@ using namespace std;
 
 using namespace nn;
 
-Mat viz(const Volume &v, int patchSize)
-{
-    PROFILEX("viz_vol")
-    int n = (int)sqrt(double(v.size()*2));
-    //cerr << v.size() << " " << patchSize << " " << n << " " << (n*patchSize*n*patchSize) << endl;
-    Mat draw(n*patchSize, n*patchSize, CV_32F, 0.0f);
-    for (size_t i=0; i<v.size(); i++)
-    {
-        Mat m = v[i].getMat(ACCESS_READ).reshape(1,patchSize);
-        int r = patchSize * (i / n);
-        int c = patchSize * (i % n);
-        m.copyTo(draw(Rect(c,r,patchSize,patchSize)));
-    }
-    return draw;
-}
-Mat viz(const UMat &weights)
-{
-    PROFILEX("viz_weights")
-    int pn = (int)sqrt(double(weights.cols)) + 1;
-    int ps = (int)sqrt(double(weights.rows));
-    Mat draw(pn*ps+2,pn*ps+2,CV_32F,0.0f);
-    for (int i=0; i<weights.cols; i++)
-    {
-        Mat f = weights.getMat(ACCESS_READ).col(i).clone().reshape(1,ps);
-        int r = ps * int(i / pn);
-        int c = ps * int(i % pn);
-        f.copyTo(draw(Rect(c,r,ps,ps)));
-    }
-    return draw;
-}
 float accuracy(const Volume &labels, const Volume &predicted)
 {
     float acc = 0.0f;
@@ -62,7 +32,7 @@ int main(int argc, char **argv)
 
     const char *keys =
             "{ help h usage ? |     | show this message }"
-            "{ ocl o          |     | toggle usage of ocl }"
+            "{ ocl o          |     | toggle ocl usage (0,1) }"
             "{ gen g          |1000 | number of train generations }"
             "{ problem p      |mnist| input problem(att,mnist,digits,numbers,tv10) }"
             "{ network n      |nn/mnist_3.xml| preconfigured network to load }"
@@ -77,7 +47,7 @@ int main(int argc, char **argv)
     String network(parser.get<String>("network"));
     String prob(parser.get<String>("problem"));
     int ngen(parser.get<int>("gen"));
-    bool useOCL(parser.get<bool>("ocl"));
+    int useOCL(parser.get<int>("ocl"));
 
     ocl::setUseOpenCL(useOCL);
     cout << "ocl " << cv::ocl::useOpenCL() << endl;
@@ -94,7 +64,7 @@ int main(int argc, char **argv)
         PROFILEX("generation")
         Volume data, res,res1,labels;
         {
-            PROFILEX("problem.train")
+            PROFILEX("train_problem")
             problem->train(32,data,labels);
         }
         float e1=0,e2=0,x0=0;
@@ -113,7 +83,7 @@ int main(int argc, char **argv)
             {
                 imshow("input", viz(data, problem->inputSize().width));
                 imshow("back", viz(res1, problem->inputSize().width));
-                //nn->show();
+                nn->show();
             }
             if (waitKey(50)==27) return 0;
             
@@ -130,4 +100,4 @@ int main(int argc, char **argv)
     
     nn->save("my.xml");
     return 0;
-}  
+}

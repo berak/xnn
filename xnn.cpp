@@ -10,7 +10,13 @@ using namespace std;
 namespace nn {
 namespace impl {
 
+
 typedef UMat (*proc)(const UMat &);
+
+UMat linear(const UMat &m)
+{
+    return m;
+}
 
 UMat minmax(const UMat &m)
 {
@@ -69,9 +75,23 @@ UMat softmax(const UMat &m)
 
 UMat rand(int r, int c)
 {
+    PROFILE;
     UMat m(r,c,CV_32F);
-    randu(m,0,1);
+    randn(m,0.5,0.25);
+    //randn(m,0,sqrt(2.0/(r*c)));
     return m;
+}
+
+UMat dropout(const UMat &m)
+{
+    PROFILE;
+    float prob = 0.5f;
+    UMat m1 = rand(m.rows, m.cols);
+    UMat mask;
+    compare(m1, prob, mask, CMP_GT);
+    UMat res;
+    multiply(m, mask, res, prob/255, CV_32F);
+    return res;
 }
 
 struct Fully : Layer
@@ -81,7 +101,7 @@ struct Fully : Layer
     float learn;
 
     virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
-    {   PROFILEX("full_fw");
+    {   PROFILEX("fully_fw");
         if (training)
         {
             cache_up = upstream;
@@ -92,13 +112,13 @@ struct Fully : Layer
         {
             UMat up;
             {
-                PROFILEX("forward:reshape")
+                PROFILEX("forward_reshape")
                 up = upstream[i].reshape(1,1);
             }
             //UMat dn = up * weights;
             UMat dn;
             {
-                PROFILEX("forward:gemm")
+                PROFILEX("forward_gemm")
                 gemm(up, weights, 1, noArray(), 0, dn);
             }  
             downstream[i] = dn;
@@ -107,10 +127,10 @@ struct Fully : Layer
         return 0;
     }
     virtual float backward(Volume &upstream, const Volume &downstream)
-    {   PROFILEX("full_bw");
+    {   PROFILEX("fully_bw");
         UMat wt;
         {   
-            PROFILEX("batckward:transpose");
+            PROFILEX("batckward_transpose");
             wt = weights.t();
         }
         upstream.resize(downstream.size());
@@ -122,57 +142,57 @@ struct Fully : Layer
             //UMat up = dn * wt;
             UMat up;
             {
-                PROFILEX("backward:gemm")
+                PROFILEX("backward_gemm")
                 gemm(dn, wt, 1, noArray(), 0, up);
             }
             upstream[i] = up;
 
             UMat c;
             {
-                PROFILEX("backward:reshape")
+                PROFILEX("backward_reshape")
                 c = cache_up[i].reshape(1,1);
             }
             //UMat pred = c * weights;
             UMat pred = cache_dn[i];
             /*{
-                PROFILEX("backward:gemm1")
+                PROFILEX("backward_gemm1")
                 gemm(c, weights, 1, noArray(), 0, pred);
             }*/
 
             //UMat res = pred - dn;
             UMat res;
             {   
-                PROFILEX("backward:subtract")
+                PROFILEX("backward_subtract")
                 subtract(pred, dn, res);
             }
             //UMat dx = c.t() * res;
             UMat dx;
             {
-                PROFILEX("backward:gemm2")
+                PROFILEX("backward_gemm2")
                 gemm(c, res, 1, noArray(), 0, dx, GEMM_1_T);
             }
             //grad += dx;
             {
-                PROFILEX("backward:add")
+                PROFILEX("backward_add")
                 add(grad, dx, grad);
             }
         }
         //grad /= downstream.size();
         {
-            PROFILEX("backward:divide")
+            PROFILEX("backward_divide")
             divide(grad, downstream.size(), grad);
         }
         //weights -= grad * learn;
         {
-            PROFILEX("backward:reshape1")
+            PROFILEX("backward_reshape1")
             multiply(grad, learn, grad);
         }
         {
-            PROFILEX("backward:subtract1")
+            PROFILEX("backward_subtract1")
             subtract(weights, grad, weights);
         }
         {
-            PROFILEX("backward:final")
+            PROFILEX("backward_final")
             Mat grad_cpu; grad.copyTo(grad_cpu);
             return sum(abs(grad_cpu))[0];
         }
@@ -200,6 +220,11 @@ struct Fully : Layer
     }    
     virtual String type() {return "fully";}
     virtual String desc() {return format("fully(%dx%d)",weights.cols, weights.rows);}
+    virtual void show(String winName)
+    {
+        namedWindow(winName);
+        imshow(winName,viz(weights));
+    }
 };
 
 struct RBM : Layer
@@ -239,7 +264,7 @@ struct Activation : Layer
         return 0;
     }
 
-    virtual float forward(const Volume &upstream, Volume &downstream, bool) 
+    virtual float forward(const Volume &upstream, Volume &downstream, bool)
     {
         return pipe(upstream, downstream, fw);
     }
@@ -248,7 +273,29 @@ struct Activation : Layer
         return pipe(downstream, upstream, bw);
     }
     virtual String type() {return _n;}
-    virtual String desc() {return format("activation(%s)",_n.c_str());}
+    virtual String desc() {return _n;}
+};
+
+struct Dropout : Layer
+{
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training)
+    {
+        if (! training)
+        {
+            downstream = upstream;
+            return 0;
+        }
+        downstream.resize(upstream.size());
+        for (size_t i=0; i<upstream.size(); i++) 
+            downstream[i] = dropout(upstream[i]);
+    }
+    virtual float backward(Volume &upstream, const Volume &downstream)
+    {
+        upstream = downstream;
+        return 0;
+    }
+    virtual String type() { return "dropout"; }
+    virtual String desc() { return "dropout"; }
 };
 
 
@@ -321,6 +368,7 @@ struct XNN : Network
             if (type=="rbm")      layer = makePtr<RBM>();
             if (type=="sigmoid")  layer = makePtr<Activation>(sigmoid,sigmoid_bp,"sigmoid");
             if (type=="relu")     layer = makePtr<Activation>(relu,relu_bp,"relu");
+            if (type=="dropout")  layer = makePtr<Dropout>();
             if (layer.empty())
             {
                 clog << "unknown layer: " << type << endl;
@@ -332,15 +380,58 @@ struct XNN : Network
         fs.release();
         return true;
     }
+    virtual void show()
+    {
+        for (size_t i=0; i<layers.size(); i++)
+        {
+            String n = format("%s_%d", layers[i]->type().c_str(), i);
+            layers[i]->show(n);
+        }
+    }
 };
 
 } // namespace impl
+
 
 Ptr<Network> createNetwork(String name)
 {
     Ptr<Network> nn = makePtr<impl::XNN>();
     nn->load(name);
     return nn;
+}
+
+
+// public helper:
+Mat viz(const Volume &v, int patchSize)
+{
+    PROFILEX("viz_vol")
+    int n = (int)sqrt(double(v.size()*2));
+    Mat draw(n*patchSize, n*patchSize, CV_32F, 0.0f);
+    for (size_t i=0; i<v.size(); i++)
+    {
+        Mat m = v[i].getMat(ACCESS_READ).reshape(1,patchSize);
+        normalize(m,m,1,0,NORM_MINMAX);
+        int r = patchSize * (i / n);
+        int c = patchSize * (i % n);
+        m.copyTo(draw(Rect(c,r,patchSize,patchSize)));
+    }
+    return draw;
+}
+Mat viz(const UMat &weights)
+{
+    PROFILEX("viz_weights")
+    int pn = (int)sqrt(double(weights.cols)) + 1;
+    int ps = (int)sqrt(double(weights.rows));
+    Mat draw(pn*ps+2,pn*ps+2,CV_32F,0.0f);
+    for (int i=0; i<weights.cols; i++)
+    {
+        Mat f = weights.getMat(ACCESS_READ).col(i).clone().reshape(1,ps);
+        normalize(f,f,1,0,NORM_MINMAX);
+        int r = ps * int(i / pn);
+        int c = ps * int(i % pn);
+        f.copyTo(draw(Rect(c,r,ps,ps)));
+    }
+    return draw;
 }
 
 } // namespace nn

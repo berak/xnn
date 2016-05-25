@@ -24,6 +24,7 @@ struct Layer
     virtual bool read(const cv::FileNode &fn) {return false;}    
     virtual cv::String desc() { return "generic"; }
     virtual cv::String type() { return "generic"; }
+    virtual void show(String winName) {}
 };
 
 struct Network
@@ -32,11 +33,15 @@ struct Network
     virtual float backward(Volume &up, const Volume &dn) = 0;
     virtual bool save(cv::String fn) = 0;
     virtual bool load(cv::String fn) = 0;
-    virtual cv::String desc() { return "generic"; }
+    virtual cv::String desc() = 0;
+    virtual void show()  = 0;
 };
 
 cv::Ptr<Problem> createProblem(cv::String name);
 cv::Ptr<Network> createNetwork(cv::String name);
+
+Mat viz(const Volume &v, int patchSize);
+Mat viz(const UMat &weights);
 
 } // namespace nn;
 
