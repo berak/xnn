@@ -24,6 +24,15 @@ UMat minmax(const UMat &m)
     normalize(m,m,1,0,NORM_MINMAX);
     return m; 
 }
+UMat mean(const UMat &m)
+{
+    PROFILE;
+    Scalar _m, _s;
+    meanStdDev(m, _m, _s);
+    UMat res;
+    subtract(m, _m, res);
+    return res; 
+}
 
 UMat relu(const UMat &m)
 {
@@ -110,11 +119,8 @@ struct Fully : Layer
         downstream.resize(upstream.size());
         for (size_t i=0; i<upstream.size(); i++)
         {
-            UMat up;
-            {
-                PROFILEX("forward_reshape")
-                up = upstream[i].reshape(1,1);
-            }
+            UMat up = upstream[i].reshape(1,1);
+//            cerr << up.size() << weights.size() << endl;;
             //UMat dn = up * weights;
             UMat dn;
             {
@@ -130,7 +136,7 @@ struct Fully : Layer
     {   PROFILEX("fully_bw");
         UMat wt;
         {   
-            PROFILEX("batckward_transpose");
+            PROFILEX("backward_transpose");
             wt = weights.t();
         }
         upstream.resize(downstream.size());
@@ -154,10 +160,6 @@ struct Fully : Layer
             }
             //UMat pred = c * weights;
             UMat pred = cache_dn[i];
-            /*{
-                PROFILEX("backward_gemm1")
-                gemm(c, weights, 1, noArray(), 0, pred);
-            }*/
 
             //UMat res = pred - dn;
             UMat res;
@@ -178,18 +180,10 @@ struct Fully : Layer
             }
         }
         //grad /= downstream.size();
-        {
-            PROFILEX("backward_divide")
-            divide(grad, downstream.size(), grad);
-        }
         //weights -= grad * learn;
         {
-            PROFILEX("backward_reshape1")
-            multiply(grad, learn, grad);
-        }
-        {
-            PROFILEX("backward_subtract1")
-            subtract(weights, grad, weights);
+            PROFILEX("backward_addscale")
+            scaleAdd(grad, -learn/downstream.size(), weights, weights);
         }
         {
             PROFILEX("backward_final")
@@ -229,26 +223,102 @@ struct Fully : Layer
 
 struct RBM : Layer
 {
-    proc fw,bw;
-    String _n;
-    RBM(String n="chicken") : _n(n) {}
+    UMat hidden;
+    UMat weights, weights_t;
+    Volume cache_up, cache_dn, cache_hidden;
+    float learn;
 
-    float pipe(const Volume &from, Volume &to, proc act) 
+    UMat dream_wake(const UMat &m)
     {
-        to.resize(from.size());
-        for (size_t i=0; i<from.size(); i++)  to[i] = act(from[i]);
-        return 0;
+        //cerr << "dw " <<  m.size() << weights.size() << endl;;
+        PROFILEX("rbm_dream_wake")
+        UMat dream;
+        gemm(m, weights, 1, noArray(), 0, dream);
+        hidden = sigmoid(dream);
+
+        //cerr << "dw " <<  hidden.size() << weights_t.size() << endl;;
+        UMat wake;
+        gemm(hidden, weights_t, 1, noArray(), 0, wake);
+        //cerr << m.size() << " " << dream.size() << " " << wake.size() << endl;
+        return sigmoid(wake);
     }
-    virtual float forward(const Volume &upstream, Volume &downstream, bool) 
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
     {
-        return pipe(upstream, downstream, fw);
+        PROFILEX("rbm_forward")
+        if (training)
+        {
+            cache_hidden.resize(upstream.size());
+        }
+        downstream.resize(upstream.size());
+        for (size_t i=0; i<upstream.size(); i++)
+        {
+            UMat up = upstream[i].reshape(1,1);
+            UMat dn = dream_wake(up);
+            if (training)
+                cache_hidden[i] = hidden;
+            downstream[i] = dn;
+        }
+        if (training)
+        {
+            cache_up = upstream;
+            cache_dn = downstream;
+        }
     }
     virtual float backward(Volume &upstream, const Volume &downstream)
     {
-        return pipe(downstream, upstream, bw);
+        PROFILEX("rbm_backward")
+        UMat grad(weights.size(), weights.type(), 0.0f);
+        upstream.resize(downstream.size());
+        for (size_t i=0; i<downstream.size(); i++)
+        {
+            UMat dn = downstream[i];
+            UMat up = dream_wake(dn);
+            upstream[i] = up;
+
+            UMat dx1;
+            gemm(dn, cache_hidden[i], 1, noArray(), 0, dx1, GEMM_1_T);
+            UMat dx2;
+            gemm(cache_up[i].reshape(1,1), hidden, 1, noArray(), 0, dx2, GEMM_1_T);
+
+            UMat dx;
+            subtract(dx1, dx2, dx);
+            add(grad, dx, grad);
+        }
+        scaleAdd(grad, -learn/downstream.size(), weights, weights);
+        transpose(weights, weights_t);
     }
-    virtual String type() {return _n;}
-    virtual String desc() {return format("RBM(%s)",_n.c_str());}
+    virtual String type() { return "rbm"; }
+    virtual String desc() { return format("rbm(%d,%d)",weights.cols,weights.rows); }
+    virtual bool write(FileStorage &fs) 
+    {
+        Mat m = weights.getMat(ACCESS_READ);
+        fs << "size" << weights.size();
+        fs << "weights" << m;
+        fs << "learn" << learn;
+        return true;
+    }
+    virtual bool read(const FileNode &fn) 
+    {
+        Size siz;
+        fn["size"] >> siz;
+        Mat m = weights.getMat(ACCESS_WRITE);
+        fn["weights"] >> m;
+        if (m.empty() && siz.area())
+        {
+            weights = rand(siz.height, siz.width);
+        }
+        weights_t = weights.t();
+        fn["learn"] >> learn;
+        return true;
+    }    
+    virtual void show(String winName)
+    {
+        namedWindow(winName+"_weights");
+        imshow(winName+"_weights", viz(weights));
+        namedWindow(winName+"_hidden");
+        //imshow(winName+"_hidden", hidden.reshape(1,int(sqrt(double(hidden.cols)))));
+        imshow(winName+"_hidden", viz(cache_hidden, int(sqrt(double(hidden.cols)))));
+    }
 };
 
 struct Activation : Layer
@@ -368,6 +438,8 @@ struct XNN : Network
             if (type=="rbm")      layer = makePtr<RBM>();
             if (type=="sigmoid")  layer = makePtr<Activation>(sigmoid,sigmoid_bp,"sigmoid");
             if (type=="relu")     layer = makePtr<Activation>(relu,relu_bp,"relu");
+            if (type=="mean")     layer = makePtr<Activation>(mean,mean,"mean");
+            if (type=="minmax")   layer = makePtr<Activation>(minmax,minmax,"minmax");
             if (type=="dropout")  layer = makePtr<Dropout>();
             if (layer.empty())
             {
