@@ -102,7 +102,7 @@ struct Digits : Problem
     
             UMat m;
             m = digi(Rect(c*SZ,r*SZ,SZ,SZ));
-            data.push_back(m);
+            data.push_back(m.clone());
     
             UMat lab(1,10,CV_32F,0.0f);
             Mat l=lab.getMat(ACCESS_WRITE);

@@ -278,14 +278,15 @@ struct XNN : Network
     }
     virtual float backward(Volume &up, const Volume &dn)
     {
+        float e=0;
         Volume a, b(dn);
         for (int i=int(layers.size())-1; i>=0; i--)
         {
-            layers[i]->backward(a,b);
+            e = layers[i]->backward(a,b);
             cv::swap(a,b);
         }
         up = b;
-        return 0;
+        return e; // 1st layer
     }
     virtual bool save(String  fn)
     {

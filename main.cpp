@@ -13,7 +13,8 @@ using namespace nn;
 Mat viz(const Volume &v, int patchSize)
 {
     PROFILEX("viz_vol")
-    int n = (int)sqrt(double(v.size())) + 1000;
+    int n = (int)sqrt(double(v.size()*2));
+    //cerr << v.size() << " " << patchSize << " " << n << " " << (n*patchSize*n*patchSize) << endl;
     Mat draw(n*patchSize, n*patchSize, CV_32F, 0.0f);
     for (size_t i=0; i<v.size(); i++)
     {
@@ -115,6 +116,7 @@ int main(int argc, char **argv)
                 //nn->show();
             }
             if (waitKey(50)==27) return 0;
+            
         }
     }  
 
