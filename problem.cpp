@@ -16,10 +16,10 @@ namespace impl {
 // !! 
 // some hardcoded paths to resources, fit to your needs !
 //
-String path_digits = "c:/p/data/img/digits.png";
-String path_mnist = "c:/p/data/mnist";
-String path_att = "c:/p/data/faces";
-String path_tv10 = "c:/p/data/tv10";
+String path_digits = "c:/p/data/img/digits.png"; // this is digits.png from opencv samples
+String path_mnist = "c:/p/data/mnist";           // took it from tiny-cnn
+String path_att = "c:/p/data/faces";             // std att-faces
+String path_tv10 = "c:/p/data/tv10";             // my own set, probably has license issues.
 //
 //
 
