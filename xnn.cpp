@@ -120,7 +120,7 @@ UMat dropout(const UMat &m)
     UMat mask;
     compare(m1, prob, mask, CMP_GT);
     UMat res;
-    multiply(m, mask, res, prob/255, CV_32F);
+    multiply(m, mask, res, 1.0/(prob*255), CV_32F);
     return res;
 }
 

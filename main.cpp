@@ -12,16 +12,15 @@ using namespace nn;
 
 float accuracy(const Volume &labels, const Volume &predicted)
 {
-    float acc = 0.0f;
+    int ok = 0;
     for (size_t i=0; i<predicted.size(); i++)
     {
-        UMat r1,r2,same;
-        labels[i].convertTo(r1,CV_32S);
-        predicted[i].convertTo(r2,CV_32S);
-        compare(r1,r2,same,CMP_EQ);
-        int ok = countNonZero(same);
-        acc += float(ok) / r1.total();
+        Point a,b;
+        minMaxLoc(labels[i], 0, 0, 0, &a);
+        minMaxLoc(predicted[i], 0, 0, 0, &b);
+        ok += (a.x == b.x);
     }
+    float acc = float(ok) / predicted.size();
     return acc;
 }
 
@@ -78,7 +77,7 @@ int main(int argc, char **argv)
         {
             PROFILEX("report")
             float acc = accuracy(labels, res);
-            cout << g << " " << e2 << " " << acc / res.size() << endl;
+            cout << g << " " << e2 << " " << acc << endl;
             if (data[0].cols>7)
             {
                 imshow("input", viz(data, problem->inputSize().width));
@@ -96,7 +95,7 @@ int main(int argc, char **argv)
     nn->forward(data,predicted,false);
     
     float acc = accuracy(labels, predicted);
-    cout << "final acc : " << acc / predicted.size() << endl;
+    cout << "final acc : " << acc << endl;
     
     nn->save("my.xml");
     return 0;
