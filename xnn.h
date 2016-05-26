@@ -20,8 +20,8 @@ struct Layer
 {
     virtual float forward(const Volume &upstream, Volume &downstream, bool training) = 0;
     virtual float backward(Volume &upstream, const Volume &downstream) = 0;
-    virtual bool write(cv::FileStorage &fs) {return false;}
-    virtual bool read(const cv::FileNode &fn) {return false;}    
+    virtual bool write(cv::FileStorage &fs) { return false; }
+    virtual bool read(const cv::FileNode &fn) { return false; }    
     virtual cv::String desc() { return "generic"; }
     virtual cv::String type() { return "generic"; }
     virtual void show(String winName) {}

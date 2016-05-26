@@ -1,12 +1,16 @@
 <?xml version="1.0"?>
 <opencv_storage>
 <layers>
-  <_><type>mean</type></_>
-  <_><type>rbm</type>
-  	 <learn>0.0001</learn>
-     <size>144 400</size></_>
   <_><type>fully</type>
-  	 <learn>0.0001</learn>
-     <size>10 400</size></_>
+  	 <learn>0.001</learn>
+     <size>100 400</size></_>
+  <_><type>sigmoid</type></_>
+  <_><type>rbm</type>
+  	 <learn>0.001</learn>
+     <size>144 100</size></_>
+  <_><type>sigmoid</type></_>
+  <_><type>fully</type>
+  	 <learn>0.001</learn>
+ 	 <size>10 100</size></_>
 </layers>
 </opencv_storage>

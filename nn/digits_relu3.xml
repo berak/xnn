@@ -7,12 +7,12 @@
   <_><type>relu</type></_>
   <_><type>dropout</type></_>
   <_><type>fully</type>
-     <learn>0.0001</learn>
+     <learn>0.001</learn>
      <size>36 144</size></_>
   <_><type>relu</type></_>
   <_><type>dropout</type></_>
   <_><type>fully</type>
-  	 <learn>0.0001</learn>
+  	 <learn>0.001</learn>
      <size>10 36</size></_>
 </layers>
 </opencv_storage>
