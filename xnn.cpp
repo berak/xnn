@@ -195,11 +195,15 @@ struct Fully : Layer
     {
         Size siz;
         fn["size"] >> siz;
-        Mat m = weights.getMat(ACCESS_WRITE);
+        Mat m;
         fn["weights"] >> m;
         if (m.empty() && siz.area())
         {
             weights = rand(siz.height, siz.width);
+        }
+        else
+        {
+            m.copyTo(weights);
         }
         fn["learn"] >> learn;
         return true;
@@ -292,11 +296,15 @@ struct RBM : Layer
     {
         Size siz;
         fn["size"] >> siz;
-        Mat m = weights.getMat(ACCESS_WRITE);
+        Mat m;
         fn["weights"] >> m;
         if (m.empty() && siz.area())
         {
             weights = rand(siz.height, siz.width);
+        }
+        else
+        {
+            m.copyTo(weights);
         }
         weights_t = weights.t();
         fn["learn"] >> learn;
