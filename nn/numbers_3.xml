@@ -2,15 +2,15 @@
 <opencv_storage>
 <layers>
   <_><type>fully</type>
-  	 <learn>0.005</learn>
+  	 <learn>0.0005</learn>
      <size>144 3</size></_>
   <_><type>sigmoid</type></_>
   <_><type>fully</type>
-     <learn>0.005</learn>
+     <learn>0.0005</learn>
      <size>36 144</size></_>
   <_><type>sigmoid</type></_>
   <_><type>fully</type>
-  	 <learn>0.005</learn>
+  	 <learn>0.0005</learn>
      <size>2 36</size></_>
 </layers>
 </opencv_storage>

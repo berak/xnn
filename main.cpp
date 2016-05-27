@@ -28,6 +28,7 @@ int main(int argc, char **argv)
 {
 
     PROFILE;
+    //theRNG().state = getTickCount();
 
     const char *keys =
             "{ help h usage ? |     | show this message }"
@@ -35,6 +36,7 @@ int main(int argc, char **argv)
             "{ gen g          |1000 | number of train generations }"
             "{ problem p      |mnist| input problem(att,mnist,digits,numbers,tv10) }"
             "{ network n      |nn/mnist_3.xml| preconfigured network to load }"
+            "{ save s         |my.xml.gz| filename of saved trained model }"
             ;
 
     CommandLineParser parser(argc, argv, keys);
@@ -45,13 +47,14 @@ int main(int argc, char **argv)
     }
     String network(parser.get<String>("network"));
     String prob(parser.get<String>("problem"));
+    String saveFile(parser.get<String>("save"));
     int ngen(parser.get<int>("gen"));
     int useOCL(parser.get<int>("ocl"));
 
     ocl::setUseOpenCL(useOCL);
     cout << "ocl " << cv::ocl::useOpenCL() << endl;
-    //theRNG().state = getTickCount();
 
+    cout << network << endl;
     Ptr<Problem> problem = nn::createProblem(prob);
     cout << problem->desc() << endl;
 
@@ -97,6 +100,6 @@ int main(int argc, char **argv)
     float acc = accuracy(labels, predicted);
     cout << "final acc : " << acc << endl;
     
-    nn->save("my.xml");
+    nn->save(saveFile);
     return 0;
 }

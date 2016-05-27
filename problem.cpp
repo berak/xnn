@@ -310,7 +310,7 @@ struct MNist : Problem
 
 } // namespace impl
 
-//// (you got your problems[i got my hashpipe])
+
 Ptr<Problem> createProblem(String name)
 {
     using namespace nn::impl;

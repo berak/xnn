@@ -13,122 +13,22 @@ namespace impl {
 
 typedef UMat (*proc)(const UMat &);
 
-UMat identity(const UMat &m)
-{
-    return m;
-}
+#include "activation.cpp"
+#include "optimizer.cpp"
 
-UMat minmax(const UMat &m)
-{
-    PROFILE;
-    normalize(m,m,1,0,NORM_MINMAX);
-    return m; 
-}
-UMat mean(const UMat &m)
-{
-    PROFILE;
-    Scalar _m, _s;
-    meanStdDev(m, _m, _s);
-    UMat res;
-    subtract(m, _m, res);
-    return res; 
-}
 
-UMat relu(const UMat &m)
-{
-    PROFILE;
-    UMat u;
-    max(m, 0, u);
-    return u;
-}
-UMat relu_bp(const UMat &m)
-{
-    PROFILE;
-    UMat mask;
-    compare(m, 0, mask, CMP_GT);
-    UMat u = m;
-    u.setTo(1, mask);
-    return u;
-}
 
-UMat sigmoid(const UMat &m)
-{
-    PROFILE;
-    UMat P;
-    multiply(m, -1, P);
-    exp(P,P);
-    add(P, 1, P);
-    divide(1,P, P);
-    return P;
-}
-UMat sigmoid_bp(const UMat &m)
-{
-    PROFILE;
-    UMat res;
-    subtract(1.0, m, res);
-    res = res.mul(m);
-    return res;
-}
 
-UMat tanh_fw(const UMat &m)
-{
-    PROFILE;
-    UMat _m,ep,en,sp,sn,res;
-    multiply(m, -1, _m);
-    exp(m, ep);
-    exp(_m, en);
-    add(ep, en, sp);
-    subtract(ep, en, sn);
-    divide(sn, sp, res);
-    return res;
-}
-UMat tanh_bw(const UMat &m)
-{
-    PROFILE;
-    UMat _m, res;
-    subtract(1, m, _m);
-    sqrt(_m, res);
-    return res;
-}
-
-UMat softmax(const UMat &m)
-{
-    UMat prob;
-    double maxVal=0;
-    minMaxLoc(m, 0, &maxVal);
-    subtract(m, maxVal, prob);
-    exp(prob, prob);
-    Scalar total = sum(prob);
-    divide(prob, total[0], prob);
-    return prob;  
-}
-
-UMat rand(int r, int c)
-{
-    PROFILE;
-    UMat m(r,c,CV_32F);
-    randn(m,0.0,0.25);
-    //randn(m,0,sqrt(2.0/(r*c)));
-    return m;
-}
-
-UMat dropout(const UMat &m)
-{
-    PROFILE;
-    float prob = 0.5f;
-    UMat m1 = rand(m.rows, m.cols);
-    UMat mask;
-    compare(m1, prob, mask, CMP_GT);
-    UMat res;
-    multiply(m, mask, res, 1.0/(prob*255), CV_32F);
-    return res;
-}
-
+template <typename Optimizer>
 struct Fully : Layer
 {
+    Optimizer optim;
     Volume cache_up, cache_dn;
     UMat weights;
     float learn;
+    float weight_init;
+    String name;
+    Fully(String n="fully"): name(n) {}
 
     virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
     {   
@@ -178,7 +78,9 @@ struct Fully : Layer
         }
         // grad /= downstream.size();
         // weights -= grad * learn;
-        scaleAdd(grad, -learn/downstream.size(), weights, weights);
+        //scaleAdd(grad, -learn/downstream.size(), weights, weights);
+        optim(grad, weights, learn/downstream.size());
+
         Mat grad_cpu; grad.copyTo(grad_cpu);
         return sum(abs(grad_cpu))[0];
     }
@@ -189,6 +91,7 @@ struct Fully : Layer
         fs << "size" << weights.size();
         fs << "weights" << m;
         fs << "learn" << learn;
+        fs << "weight_init" << weight_init;
         return true;
     }
     virtual bool read(const FileNode &fn) 
@@ -197,9 +100,11 @@ struct Fully : Layer
         fn["size"] >> siz;
         Mat m;
         fn["weights"] >> m;
+        weight_init = 0.5f;
+        fn["weight_init"] >> weight_init;
         if (m.empty() && siz.area())
         {
-            weights = rand(siz.height, siz.width);
+            weights = rand(siz.height, siz.width, weight_init);
         }
         else
         {
@@ -208,8 +113,8 @@ struct Fully : Layer
         fn["learn"] >> learn;
         return true;
     }    
-    virtual String type() {return "fully";}
-    virtual String desc() {return format("fully(%dx%d)",weights.cols, weights.rows);}
+    virtual String type() { return name; }
+    virtual String desc() { return format("%s(%d,%d,%1.2f,%1.2f)",name.c_str(), weights.cols, weights.rows, learn, weight_init); }
     virtual void show(String winName)
     {
         namedWindow(winName);
@@ -229,12 +134,12 @@ struct RBM : Layer
         PROFILEX("rbm_dream_wake")
         UMat dream;
         gemm(m, weights, 1, noArray(), 0, dream);
-        hidden = tanh_fw(dream);
+        hidden = tanh2_fw(dream);
         //hidden = sigmoid(dream);
 
         UMat wake;
         gemm(hidden, weights_t, 1, noArray(), 0, wake);
-        return tanh_fw(wake);
+        return tanh2_fw(wake);
         //return sigmoid(wake);
     }
     virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
@@ -273,17 +178,17 @@ struct RBM : Layer
             UMat dx1;
             gemm(dn, cache_hidden[i], 1, noArray(), 0, dx1, GEMM_1_T);
             UMat dx2;
-            gemm(cache_dn[i].reshape(1,1), hidden, 1, noArray(), 0, dx2, GEMM_1_T);
+            gemm(cache_up[i].reshape(1,1), hidden, 1, noArray(), 0, dx2, GEMM_1_T);
 
             UMat dx;
-            subtract(dx2, dx1, dx);
+            subtract(dx1, dx2, dx);
             add(grad, dx, grad);
         }
         scaleAdd(grad, -learn/downstream.size(), weights, weights);
         transpose(weights, weights_t);
     }
     virtual String type() { return "rbm"; }
-    virtual String desc() { return format("rbm(%d,%d)",weights.cols,weights.rows); }
+    virtual String desc() { return format("rbm(%dx%d)",weights.cols,weights.rows); }
     virtual bool write(FileStorage &fs) 
     {
         Mat m = weights.getMat(ACCESS_READ);
@@ -373,10 +278,11 @@ struct Dropout : Layer
 struct XNN : Network
 {
     vector<Ptr<Layer>> layers;
+    String name;
 
     virtual String desc() 
     { 
-        String d="";
+        String d=format("%s %d gens\r\n", name.c_str(), ngens);
         for (size_t i=0; i<layers.size(); i++)
         {
             d += layers[i]->desc() + "\r\n";
@@ -396,6 +302,7 @@ struct XNN : Network
     }
     virtual float backward(Volume &up, const Volume &dn)
     {
+        ngens ++;
         float e=0;
         Volume a, b(dn);
         for (int i=int(layers.size())-1; i>=0; i--)
@@ -423,17 +330,20 @@ struct XNN : Network
             fs << "}";
         }
         fs << "]";
+        fs << "ngens" << ngens;
         fs.release();
         return true;
     }
     virtual bool load(String  fn)
     {
+
         FileStorage fs(fn,0);
         if (!fs.isOpened())
         {
             clog << "could not load " << fn << endl;
             return false;
         }
+        name = fn;
         FileNode no = fs["layers"];
         for (FileNodeIterator it=no.begin(); it!=no.end(); ++it)
         {
@@ -441,11 +351,14 @@ struct XNN : Network
             String type;
             n["type"] >> type;
             Ptr<Layer> layer;
-            if (type=="fully")    layer = makePtr<Fully>();
+            if (type=="fully")    layer = makePtr<Fully<SGD>>("fully");
+            if (type=="fully_ada")layer = makePtr<Fully<adagrad>>("fully_ada");
+            if (type=="fully_rms")layer = makePtr<Fully<RMSprop>>("fully_rms");
             if (type=="rbm")      layer = makePtr<RBM>();
             if (type=="sigmoid")  layer = makePtr<Activation>(sigmoid,sigmoid_bp,"sigmoid");
             if (type=="relu")     layer = makePtr<Activation>(relu,relu_bp,"relu");
             if (type=="tanh")     layer = makePtr<Activation>(tanh_fw,tanh_bw,"tanh");
+            if (type=="tanh2")    layer = makePtr<Activation>(tanh2_fw,tanh2_bw,"tanh2");
             if (type=="mean")     layer = makePtr<Activation>(mean,mean,"mean");
             if (type=="minmax")   layer = makePtr<Activation>(minmax,minmax,"minmax");
             if (type=="dropout")  layer = makePtr<Dropout>();
@@ -456,7 +369,8 @@ struct XNN : Network
             }
             layer->read(n);
             layers.push_back(layer);
-        }    
+        }
+        fs["ngens"] >> ngens;
         fs.release();
         return true;
     }
@@ -468,6 +382,7 @@ struct XNN : Network
             layers[i]->show(n);
         }
     }
+    int ngens;
 };
 
 } // namespace impl
