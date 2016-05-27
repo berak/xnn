@@ -5,7 +5,7 @@ struct SGD
 {
     UMat operator()(const UMat &grad, UMat &weights, float learn)
     {
-        PROFILE;
+        PROFILEX("SGD");
         // W -= alpha * grad
         scaleAdd(grad, -learn, weights, weights);
         return weights;
@@ -18,7 +18,7 @@ struct adagrad
 
     UMat operator()(const UMat &grad, UMat &weights, float learn)
     {   
-        PROFILE;
+        PROFILEX("adagrad");
         //    g[i] += dW[i] * dW[i];
         //    W[i] -= alpha * dW[i] / (std::sqrt(g[i]) + eps);
 
@@ -45,7 +45,7 @@ struct RMSprop
 
     UMat operator()(const UMat &grad, UMat &weights, float learn)
     {   
-        PROFILE;
+        PROFILES("RMSProp");
         //    g[i] = mu * g[i] + (1 - mu) * dW[i] * dW[i];
         //    W[i] -= alpha * dW[i] / std::sqrt(g[i] + eps);
     
