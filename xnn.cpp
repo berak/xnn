@@ -17,8 +17,6 @@ typedef UMat (*proc)(const UMat &);
 #include "optimizer.cpp"
 
 
-
-
 template <typename Optimizer>
 struct Fully : Layer
 {
@@ -275,6 +273,65 @@ struct Dropout : Layer
 };
 
 
+struct BatchNorm : Layer
+{
+    virtual float batch(const Volume &from, Volume &to)
+    {
+        PROFILEX("batchnorm")
+        to.resize(from.size());
+        Scalar m,s, M, S;
+        for (size_t i=0; i<from.size(); i++)
+        {
+            meanStdDev(from[0], m, s);
+            M += m;
+            S += s;
+        }
+        M[0] /= from.size();
+        S[0] /= from.size();
+        for (size_t i=0; i<from.size(); i++)
+        {
+            subtract(from[0], M, to[i]);
+            divide(to[i], S[0]+0.0000001, to[i]);
+        }
+        /*UMat m(from[0].size(), from[0].type(), 0.0f);
+        for (size_t i=0; i<from.size(); i++)
+            add(from[0], m, m);
+        divide(m, from.size(), m);
+
+        UMat v(from[0].size(), from[0].type(), 0.00000001f);
+        for (size_t i=0; i<from.size(); i++) 
+        {
+            UMat s;
+            subtract(from[0], m, s);
+            multiply(s,s,s);
+            add(v,s,v);
+        }
+        divide(v, from.size(), v);
+        for (size_t i=0; i<from.size(); i++) 
+        {
+            subtract(from[0], m, to[i]);
+            divide(to[i], v, to[i]);
+        }*/
+        return 0;
+    }
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training)
+    {
+        if (! training)
+        {
+            downstream = upstream;
+            return 0;
+        }
+        return batch(upstream, downstream);
+    }
+    virtual float backward(Volume &upstream, const Volume &downstream)
+    {
+        return batch(downstream, upstream);
+    }
+    virtual String type() { return "batchnorm"; }
+    virtual String desc() { return "batchnorm"; }
+};
+
+
 struct XNN : Network
 {
     vector<Ptr<Layer>> layers;
@@ -352,6 +409,7 @@ struct XNN : Network
             n["type"] >> type;
             Ptr<Layer> layer;
             if (type=="fully")    layer = makePtr<Fully<SGD>>("fully");
+            if (type=="fully_mom")layer = makePtr<Fully<momentum>>("fully_mom");
             if (type=="fully_ada")layer = makePtr<Fully<adagrad>>("fully_ada");
             if (type=="fully_rms")layer = makePtr<Fully<RMSprop>>("fully_rms");
             if (type=="rbm")      layer = makePtr<RBM>();
@@ -362,6 +420,7 @@ struct XNN : Network
             if (type=="mean")     layer = makePtr<Activation>(mean,mean,"mean");
             if (type=="minmax")   layer = makePtr<Activation>(minmax,minmax,"minmax");
             if (type=="dropout")  layer = makePtr<Dropout>();
+            if (type=="batchnorm")layer = makePtr<BatchNorm>();
             if (layer.empty())
             {
                 clog << "unknown layer: " << type << endl;

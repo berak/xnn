@@ -34,6 +34,7 @@ int main(int argc, char **argv)
             "{ help h usage ? |     | show this message }"
             "{ ocl o          |     | toggle ocl usage (0,1) }"
             "{ gen g          |1000 | number of train generations }"
+            "{ report r       |50   | report frequency }"
             "{ problem p      |mnist| input problem(att,mnist,digits,numbers,tv10) }"
             "{ network n      |nn/mnist_3.xml| preconfigured network to load }"
             "{ save s         |my.xml.gz| filename of saved trained model }"
@@ -49,12 +50,12 @@ int main(int argc, char **argv)
     String prob(parser.get<String>("problem"));
     String saveFile(parser.get<String>("save"));
     int ngen(parser.get<int>("gen"));
+    int report(parser.get<int>("report"));
     int useOCL(parser.get<int>("ocl"));
 
     ocl::setUseOpenCL(useOCL);
     cout << "ocl " << cv::ocl::useOpenCL() << endl;
 
-    cout << network << endl;
     Ptr<Problem> problem = nn::createProblem(prob);
     cout << problem->desc() << endl;
 
@@ -76,7 +77,7 @@ int main(int argc, char **argv)
             e2 = nn->backward(res1,labels);
         }
         
-        if (g%50==0)
+        if (g % report == 0)
         {
             PROFILEX("report")
             float acc = accuracy(labels, res);
