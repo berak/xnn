@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<layers>
+  <_><type>fully</type>
+     <weight_init>0.1</weight_init>
+  	 <learn>0.01</learn>
+     <size>144 784</size></_>
+  <!--_><type>batchnorm</type></_-->
+  <!--_><type>relu</type></_-->
+  <_><type>sigmoid</type></_>
+  <_><type>fully</type>
+     <weight_init>0</weight_init>
+     <learn>0.01</learn>
+     <size>36 144</size></_>
+  <!--_><type>relu</type></_-->
+  <_><type>mean</type></_>
+  <_><type>sigmoid</type></_>
+  <_><type>fully</type>
+     <weight_init>0.5</weight_init>
+  	 <learn>0.01</learn>
+     <size>10 36</size></_>
+</layers>
+</opencv_storage>
