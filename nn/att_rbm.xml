@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <opencv_storage>
 <layers>
-  <_><type>fully</type>
+  <_><type>fully_mom</type>
   	 <learn>0.001</learn>
      <size>144 900</size></_>
   <_><type>tanh2</type></_>
@@ -9,7 +9,7 @@
   	 <learn>0.001</learn>
      <size>144 144</size></_>
   <_><type>tanh2</type></_>
-  <_><type>fully</type>
+  <_><type>fully_mom</type>
   	 <learn>0.01</learn>
  	 <size>40 144</size></_>
 </layers>

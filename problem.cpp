@@ -37,7 +37,6 @@ Mat deskew(const Mat &img)
     return res;
 }
 
-
 struct Numbers : Problem
 {
     const int ROWS = 1;
@@ -69,6 +68,52 @@ struct Numbers : Problem
     virtual Size inputSize() { return Size(ROWS,COLS); } 
     virtual Size outputSize() { return Size(ROWS,CLASSES); }
     virtual String desc() {return format("Numbers(%d,%d,%d)",ROWS,COLS,CLASSES);}
+};
+
+struct Spiral : Problem
+{
+    const int CLASSES = 3;
+    const int N=1000;
+
+    UMat X, Y;
+
+    // spiral
+    Spiral()
+    {
+        Mat x,y;
+        int K=CLASSES;
+        int ix=0;
+        x.create(N*K, 2, CV_32F);
+        y.create(N*K, K, CV_32F);
+        y.setTo(0);
+        for (int k=0; k<K; k++)
+        for (int n=1; n<=N; n++)
+        {
+            float r = float(N)/(n);
+            float t = k*4 + (k+1)*4*r + theRNG().uniform(0.0f, N*0.2f);
+            x.at<float>(ix,0) = r*sin(t); 
+            x.at<float>(ix,1) = r*cos(t);
+            y.at<float>(ix,k) = 1.0f;
+            ix++;
+        }
+        x.copyTo(X);
+        y.copyTo(Y);
+        cerr << X.size() << " " << Y.size() << endl;
+    } 
+    virtual void train(int n, Volume &data, Volume &labels) {batch(n,data,labels, 0);}
+    virtual void test(int n, Volume &data, Volume &labels) {batch(n,data,labels, N/2);}
+    virtual void batch(int n, Volume &data, Volume &labels, int offset) 
+    {
+        for (int i=0; i<n; i++)
+        {
+            int idx = theRNG().uniform(0,N/2+offset);
+            data.push_back(X.row(idx));
+            labels.push_back(Y.row(idx));
+        }
+    }
+    virtual Size inputSize() { return Size(1,2); } 
+    virtual Size outputSize() { return Size(1,3); }
+    virtual String desc() {return "Spiral(2,3,1000)";}
 };
 
 struct Digits : Problem
@@ -319,6 +364,7 @@ Ptr<Problem> createProblem(String name)
     if (name=="digits") return makePtr<impl::Digits>();
     if (name=="mnist") return makePtr<impl::MNist>();
     if (name=="numbers") return makePtr<impl::Numbers>();
+    if (name=="spiral") return makePtr<impl::Spiral>();
 }
 
 } // namespace nn

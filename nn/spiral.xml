@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<layers>
+  <_><type>fully</type>
+     <weights_init>0.01</weights_init>
+  	 <learn>0.0001</learn>
+     <size>100 2</size></_>
+  <_><type>sigmoid</type></_>
+  <!--_><type>fully</type>
+     <weights_init>0.01</weights_init>
+     <learn>0.0001</learn>
+     <size>36 144</size></_>
+  <_><type>dropout</type></_>
+  <_><type>sigmoid</type></_-->
+  <_><type>fully</type>
+     <weights_init>0.01</weights_init>
+  	 <learn>0.0001</learn>
+     <size>3 100</size></_>
+</layers>
+</opencv_storage>

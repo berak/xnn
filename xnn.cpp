@@ -17,77 +17,21 @@ typedef UMat (*proc)(const UMat &);
 #include "optimizer.cpp"
 
 
-template <typename Optimizer>
-struct Fully : Layer
+
+struct BaseWeights :  Layer
 {
-    Optimizer optim;
-    Volume cache_up, cache_dn;
-    UMat weights;
-    float learn;
-    float weight_init;
+    UMat weights, weights_t, bias;
+    float learn, weight_init;
     String name;
-    Fully(String n="fully"): name(n) {}
-
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
-    {   
-        PROFILEX("fully_forward");
-        if (training)
-        {
-            cache_up = upstream;
-            cache_dn.resize(upstream.size());
-        }
-        downstream.resize(upstream.size());
-        for (size_t i=0; i<upstream.size(); i++)
-        {
-            UMat up = upstream[i].reshape(1,1);
-            // dn = up * weights
-            UMat dn;
-            gemm(up, weights, 1, noArray(), 0, dn);
-            downstream[i] = dn;
-            if (training) cache_dn[i] = dn;
-        }
-        return 0;
-    }
-
-    virtual float backward(Volume &upstream, const Volume &downstream)
-    {   
-        PROFILEX("fully_backward");
-        UMat wt = weights.t();
-        upstream.resize(downstream.size());
-        UMat grad(weights.size(), weights.type(), 0.0f);
-        //#pragma omp parallel for
-        for (size_t i=0; i<downstream.size(); i++)
-        {
-            UMat dn = downstream[i];
-            // up = dn * wt;
-            UMat up;
-            gemm(dn, wt, 1, noArray(), 0, up);
-            upstream[i] = up;
-            // residual = predicted - truth
-            UMat c = cache_up[i].reshape(1,1);
-            UMat pred = cache_dn[i];
-            UMat res;
-            subtract(pred, dn, res);
-            // dx = c.t() * res;
-            UMat dx;
-            gemm(c, res, 1, noArray(), 0, dx, GEMM_1_T);
-            // grad += dx;
-            add(grad, dx, grad);
-        }
-        // grad /= downstream.size();
-        // weights -= grad * learn;
-        //scaleAdd(grad, -learn/downstream.size(), weights, weights);
-        optim(grad, weights, learn/downstream.size());
-
-        Mat grad_cpu; grad.copyTo(grad_cpu);
-        return sum(abs(grad_cpu))[0];
-    }
+    BaseWeights(String n="fully"): name(n) {}
 
     virtual bool write(FileStorage &fs) 
     {
         Mat m = weights.getMat(ACCESS_READ);
+        Mat b = bias.getMat(ACCESS_READ);
         fs << "size" << weights.size();
         fs << "weights" << m;
+        fs << "bias" << b;
         fs << "learn" << learn;
         fs << "weight_init" << weight_init;
         return true;
@@ -96,23 +40,87 @@ struct Fully : Layer
     {
         Size siz;
         fn["size"] >> siz;
-        Mat m;
+        Mat m,b;
         fn["weights"] >> m;
+        fn["bias"] >> b;
         weight_init = 0.5f;
         fn["weight_init"] >> weight_init;
         if (m.empty() && siz.area())
         {
             weights = rand(siz.height, siz.width, weight_init);
+            bias = UMat(siz.width, 1, CV_32F, 0.0f);
         }
         else
         {
             m.copyTo(weights);
+            b.copyTo(bias);
         }
+        weights_t = weights.t();
         fn["learn"] >> learn;
         return true;
     }    
     virtual String type() { return name; }
-    virtual String desc() { return format("%s(%d,%d,%1.2f,%1.2f)",name.c_str(), weights.cols, weights.rows, learn, weight_init); }
+    virtual String desc() { return format("%s(%d,%d,%1.3f,%1.3f)",name.c_str(), weights.cols, weights.rows, learn, weight_init); }
+};
+
+template <typename Optimizer>
+struct Fully : BaseWeights 
+{
+    Optimizer optim;
+    Volume cache_up, cache_dn;
+    Fully(String n="fully"): BaseWeights(n) {}
+
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
+    {   
+        PROFILEX("fully_forward");
+        downstream.resize(upstream.size());
+        for (size_t i=0; i<upstream.size(); i++)
+        {
+            // dn = up * weights + bias
+            UMat up = upstream[i].reshape(1,1);
+            gemm(up, weights, 1, bias, 1, downstream[i], GEMM_3_T);
+        }
+        if (training)
+        {
+            cache_up = upstream;
+            cache_dn = downstream;
+        }
+        return 0;
+    }
+
+    virtual float backward(Volume &upstream, const Volume &downstream)
+    {   
+        PROFILEX("fully_backward");
+        upstream.resize(downstream.size());
+        UMat grad(weights.size(), weights.type(), 0.0f);
+        //#pragma omp parallel for
+        for (size_t i=0; i<downstream.size(); i++)
+        {
+            UMat dn = downstream[i];
+            // up = dn * wt;
+            UMat up;
+            gemm(dn, weights_t, 1, noArray(), 0, up);
+            upstream[i] = up;
+            // residual = predicted - truth
+            UMat pred = cache_dn[i];
+            UMat res;
+            subtract(pred, dn, res);
+            // dx = c.t() * res;
+            // grad += dx;
+            UMat c = cache_up[i];
+            c = c.reshape(1, c.total());
+            gemm(c, res, 1, grad, 1, grad);
+        }
+        // grad /= downstream.size();
+        // weights -= grad * learn;
+        //scaleAdd(grad, -learn/downstream.size(), weights, weights);
+        optim(grad, weights, learn/downstream.size());
+        weights_t = weights.t();
+
+        Mat grad_cpu; grad.copyTo(grad_cpu);
+        return sum(abs(grad_cpu))[0];
+    }
+
     virtual void show(String winName)
     {
         namedWindow(winName);
@@ -120,13 +128,100 @@ struct Fully : Layer
     }
 };
 
-struct RBM : Layer
-{
-    UMat hidden;
-    UMat weights, weights_t;
-    Volume cache_up, cache_dn, cache_hidden;
-    float learn;
 
+template <typename Optimizer>
+struct Softmax : BaseWeights
+{
+    Optimizer optim;
+    Volume cache_up, cache_dn;
+    float reg;
+    Softmax(String n="softmax"): BaseWeights(n) {}
+
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
+    {   
+        PROFILEX("softmax_forward");
+        downstream.resize(upstream.size());
+        for (size_t i=0; i<upstream.size(); i++)
+        {
+            // dn = up * weights
+            // cerr << up.size() << weights.size() << bias.size() << endl;          
+            UMat up = upstream[i].reshape(1,1);
+            gemm(up, weights, 1, bias, 1, downstream[i], GEMM_3_T);        
+        }
+        if (training)
+        {
+            cache_up = upstream;
+            cache_dn = downstream;
+        }
+        return 0;
+    }
+
+    virtual float backward(Volume &upstream, const Volume &downstream)
+    {   
+        PROFILEX("softmax_backward");
+        upstream.resize(downstream.size());
+        UMat grad(weights.size(), weights.type(), 0.0f);
+        UMat db(bias.size(), bias.type(), 0.0f);
+        //#pragma omp parallel for
+        for (size_t i=0; i<downstream.size(); i++)
+        {
+            UMat dn = downstream[i];
+            // up = dn * wt + bias;
+            UMat up;
+            gemm(dn, weights_t, 1, noArray(), 0, up);
+            //gemm(dn, weights_t, 1, bias, -1, up, GEMM_3_T);
+            upstream[i] = up;
+            UMat pred = cache_dn[i];
+            UMat prob, rsum;
+            exp(pred, prob);
+            Scalar total = sum(prob);
+            divide(prob, total[0], prob);
+            /*reduce(prob, rsum, 1, REDUCE_SUM);
+            repeat(rsum, 1, prob.cols, rsum);
+            divide(prob, rsum, prob);*/
+
+            UMat mask,res;
+            dn.convertTo(mask,CV_8U);
+            subtract(prob, -1, res, mask);
+            // dx = c.t() * res;
+            // grad += dx;
+            UMat c = cache_up[i];
+            c = c.reshape(1, c.total());
+            gemm(c, res, 1.0/downstream.size(), grad, 1, grad);
+
+            UMat d;
+            reduce(prob, d, 0, REDUCE_SUM);
+            //cerr << db.size() << d.size() << endl;
+            add(db, d.t(), db);           
+        }
+        // grad /= downstream.size();
+        // weights -= grad * learn;
+        //scaleAdd(grad, -learn/downstream.size(), weights, weights);
+        float reg = 0.0001;
+        scaleAdd(weights, reg, grad, grad);
+        optim(grad, weights, learn/downstream.size());
+        optim(db, bias, learn/downstream.size());
+        weights_t = weights.t();
+
+        Mat grad_cpu; grad.copyTo(grad_cpu);
+        return sum(abs(grad_cpu))[0];
+    }
+
+    virtual void show(String winName)
+    {
+        namedWindow(winName);
+        imshow(winName,viz(weights));
+    }
+};
+
+
+template <typename Optimizer>
+struct RBM : BaseWeights
+{
+    Optimizer optim;
+    UMat hidden;
+    Volume cache_up, cache_dn, cache_hidden;
+  
     UMat dream_wake(const UMat &m)
     {
         PROFILEX("rbm_dream_wake")
@@ -182,37 +277,10 @@ struct RBM : Layer
             subtract(dx1, dx2, dx);
             add(grad, dx, grad);
         }
-        scaleAdd(grad, -learn/downstream.size(), weights, weights);
+        optim(grad, weights, learn/downstream.size());
         transpose(weights, weights_t);
     }
     virtual String type() { return "rbm"; }
-    virtual String desc() { return format("rbm(%dx%d)",weights.cols,weights.rows); }
-    virtual bool write(FileStorage &fs) 
-    {
-        Mat m = weights.getMat(ACCESS_READ);
-        fs << "size" << weights.size();
-        fs << "weights" << m;
-        fs << "learn" << learn;
-        return true;
-    }
-    virtual bool read(const FileNode &fn) 
-    {
-        Size siz;
-        fn["size"] >> siz;
-        Mat m;
-        fn["weights"] >> m;
-        if (m.empty() && siz.area())
-        {
-            weights = rand(siz.height, siz.width);
-        }
-        else
-        {
-            m.copyTo(weights);
-        }
-        weights_t = weights.t();
-        fn["learn"] >> learn;
-        return true;
-    }    
     virtual void show(String winName)
     {
         namedWindow(winName+"_weights");
@@ -397,8 +465,7 @@ struct XNN : Network
         FileStorage fs(fn,0);
         if (!fs.isOpened())
         {
-            clog << "could not load " << fn << endl;
-            return false;
+            CV_Error(0, String("could not load ") + fn);
         }
         name = fn;
         FileNode no = fs["layers"];
@@ -412,7 +479,8 @@ struct XNN : Network
             if (type=="fully_mom")layer = makePtr<Fully<momentum>>("fully_mom");
             if (type=="fully_ada")layer = makePtr<Fully<adagrad>>("fully_ada");
             if (type=="fully_rms")layer = makePtr<Fully<RMSprop>>("fully_rms");
-            if (type=="rbm")      layer = makePtr<RBM>();
+            if (type=="softmax")  layer = makePtr<Softmax<SGD>>();
+            if (type=="rbm")      layer = makePtr<RBM<SGD>>();
             if (type=="sigmoid")  layer = makePtr<Activation>(sigmoid,sigmoid_bp,"sigmoid");
             if (type=="relu")     layer = makePtr<Activation>(relu,relu_bp,"relu");
             if (type=="tanh")     layer = makePtr<Activation>(tanh_fw,tanh_bw,"tanh");
@@ -423,8 +491,7 @@ struct XNN : Network
             if (type=="batchnorm")layer = makePtr<BatchNorm>();
             if (layer.empty())
             {
-                clog << "unknown layer: " << type << endl;
-                return false;
+                CV_Error(0, String("unknown layer: ") + type);
             }
             layer->read(n);
             layers.push_back(layer);
@@ -463,8 +530,8 @@ Mat viz(const Volume &v, int patchSize)
     Mat draw(n*patchSize, n*patchSize, CV_32F, 0.0f);
     for (size_t i=0; i<v.size(); i++)
     {
-        Mat m = v[i].getMat(ACCESS_READ).reshape(1,patchSize);
-        normalize(m,m,1,0,NORM_MINMAX);
+        Mat m2, m = v[i].getMat(ACCESS_READ).reshape(1,patchSize);
+        normalize(m, m2, 1, 0, NORM_MINMAX);
         int r = patchSize * (i / n);
         int c = patchSize * (i % n);
         m.copyTo(draw(Rect(c,r,patchSize,patchSize)));
@@ -480,10 +547,10 @@ Mat viz(const UMat &weights)
     for (int i=0; i<weights.cols; i++)
     {
         Mat f = weights.getMat(ACCESS_READ).col(i).clone().reshape(1,ps);
-        normalize(f,f,1,0,NORM_MINMAX);
+        normalize(f, f, 1, 0, NORM_MINMAX);
         int r = ps * int(i / pn);
         int c = ps * int(i % pn);
-        f.copyTo(draw(Rect(c,r,ps,ps)));
+        f.copyTo(draw(Rect(c, r, ps, ps)));
     }
     return draw;
 }

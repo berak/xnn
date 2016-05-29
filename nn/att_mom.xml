@@ -4,17 +4,16 @@
   <_><type>fully_mom</type>
      <weight_init>0.1</weight_init>
   	 <learn>0.01</learn>
-     <size>144 784</size></_>
-  <_><type>dropout</type></_>
+     <size>144 900</size></_>
   <_><type>sigmoid</type></_>
   <_><type>fully_mom</type>
-     <weight_init>0</weight_init>
-     <learn>0.01</learn>
-     <size>36 144</size></_>
+     <weight_init>0.2</weight_init>
+  	 <learn>0.01</learn>
+     <size>144 144</size></_>
   <_><type>sigmoid</type></_>
   <_><type>fully_mom</type>
      <weight_init>0.5</weight_init>
   	 <learn>0.01</learn>
-     <size>10 36</size></_>
+ 	 <size>40 144</size></_>
 </layers>
 </opencv_storage>
