@@ -19,7 +19,7 @@ struct Problem
 struct Layer
 {
     virtual float forward(const Volume &upstream, Volume &downstream, bool training) = 0;
-    virtual float backward(Volume &upstream, const Volume &downstream) = 0;
+    virtual float backward(Volume &upstream, const Volume &downstream, bool training) = 0;
     virtual bool write(cv::FileStorage &fs) { return false; }
     virtual bool read(const cv::FileNode &fn) { return false; }    
     virtual cv::String desc() { return "generic"; }
@@ -30,7 +30,7 @@ struct Layer
 struct Network
 {
     virtual float forward(const Volume &up, Volume &dn, bool training) = 0;
-    virtual float backward(Volume &up, const Volume &dn) = 0;
+    virtual float backward(Volume &up, const Volume &dn, bool training) = 0;
     virtual bool save(cv::String fn) = 0;
     virtual bool load(cv::String fn) = 0;
     virtual cv::String desc() = 0;

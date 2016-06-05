@@ -70,14 +70,14 @@ struct Numbers : Problem
     virtual String desc() {return format("Numbers(%d,%d,%d)",ROWS,COLS,CLASSES);}
 };
 
+// https://cs231n.github.io/neural-networks-case-study/#linear
 struct Spiral : Problem
 {
     const int CLASSES = 3;
     const int N=1000;
 
     UMat X, Y;
-
-    // spiral
+    
     Spiral()
     {
         Mat x,y;

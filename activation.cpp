@@ -98,18 +98,6 @@ UMat tanh2_bw(const UMat &m)
     return res;
 }
 
-UMat softmax(const UMat &m)
-{
-    UMat prob;
-    double maxVal=0;
-    minMaxLoc(m, 0, &maxVal);
-    subtract(m, maxVal, prob);
-    exp(prob, prob);
-    Scalar total = sum(prob);
-    divide(prob, total[0], prob);
-    return prob;  
-}
-
 UMat rand(int r, int c, double v=0.5f)
 {
     PROFILE;

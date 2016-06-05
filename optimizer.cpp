@@ -59,7 +59,6 @@ struct adagrad
         add(b, eps, b);
         divide(grad, b, c); 
         scaleAdd(c, -learn, weights, weights);
-        G = grad;
         return weights;
     }
 
@@ -86,9 +85,8 @@ struct RMSprop
         multiply(grad, grad, a);
         scaleAdd(a, (1.0f-mu), G, G);
         sqrt(G, b);
-        divide(grad, b, c); 
+        divide(grad, b, c);
         scaleAdd(c, -learn, weights, weights);
-        //G = weights;
         return weights;
     }
 

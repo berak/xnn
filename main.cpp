@@ -97,7 +97,7 @@ int main(int argc, char **argv)
         {
             PROFILEX("train_pass")
             x0 = nn->forward(data, res, true);
-            e2 = nn->backward(res1, labels);
+            e2 = nn->backward(res1, labels, true);
         }
         
         if (g % report == 0)
@@ -118,13 +118,17 @@ int main(int argc, char **argv)
         }
     }  
 
-    Volume data,predicted,labels;
+    Volume data,predicted,labels,res1;
     problem->test(100, data, labels);
    
     nn->forward(data, predicted, false);
+    float loss_fw = loss(data, predicted);
     
+    nn->backward(res1, labels, false);
+    float loss_bw = loss(res1, labels);
+
     float acc = accuracy(labels, predicted);
-    cout << "final acc : " << acc << endl;
+    cout << "final acc : " << acc << " loss : " << loss_fw << " / " << loss_bw << endl;
     
     nn->save(saveFile);
     return 0;
