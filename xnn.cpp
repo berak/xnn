@@ -18,6 +18,31 @@ typedef UMat (*proc)(const UMat &);
 #include "optimizer.cpp"
 
 
+struct LinearLoss
+{
+    void operator()(const UMat &predicted,const UMat &truth, UMat &res) const
+    {
+        PROFILEX("loss_linear");
+        subtract(predicted,truth,res);
+    }
+};
+
+struct SoftmaxLoss
+{
+    void operator()(const UMat &predicted,const UMat &truth, UMat &res) const
+    {
+        PROFILEX("loss_softmax");
+        UMat prob, mask;
+
+        exp(predicted, prob);
+        Scalar total = sum(prob);
+        divide(prob, total[0], prob);
+
+        truth.convertTo(mask,CV_8U);
+        subtract(prob, -1, res, mask);
+    }
+};
+
 
 struct BaseWeights :  Layer
 {
@@ -64,10 +89,11 @@ struct BaseWeights :  Layer
     virtual String desc() { return format("%s(%d,%d,%1.3f,%1.3f)",name.c_str(), weights.cols, weights.rows, learn, weight_init); }
 };
 
-template <typename Optimizer>
+template <typename Optimizer, typename Loss>
 struct Fully : BaseWeights 
 {
-    Optimizer optim;
+    Optimizer optim_w, optim_b;
+    Loss loss;
     Volume cache_up, cache_dn;
     Fully(String n="fully"): BaseWeights(n) {}
 
@@ -94,6 +120,7 @@ struct Fully : BaseWeights
         PROFILEX("fully_backward");
         upstream.resize(downstream.size());
         UMat grad(weights.size(), weights.type(), 0.0f);
+        UMat gradB(bias.size(), bias.type(), 0.0f);
         //#pragma omp parallel for
         for (size_t i=0; i<downstream.size(); i++)
         {
@@ -102,24 +129,35 @@ struct Fully : BaseWeights
             UMat up;
             gemm(dn, weights_t, 1, noArray(), 0, up);
             upstream[i] = up;
+            if (!training)
+                continue;
             // residual = predicted - truth
             UMat pred = cache_dn[i];
             UMat res;
-            subtract(pred, dn, res);
+            loss(pred, dn, res);
             // dx = c.t() * res;
             // grad += dx;
             UMat c = cache_up[i];
             c = c.reshape(1, c.total());
             gemm(c, res, 1, grad, 1, grad);
+            // bias, too.
+            UMat db;
+            reduce(res, db, 0, REDUCE_SUM);
+            /*//cerr << db.size() << d.size() << endl;
+            add(db, d.reshape(1,d.total()), db);           
+            UMat db;
+            reduce(grad, db, 1, REDUCE_SUM);*/
+            add(gradB, gradB, db.reshape(1,db.total()));
         }
-        // grad /= downstream.size();
-        // weights -= grad * learn;
-        //scaleAdd(grad, -learn/downstream.size(), weights, weights);
-        optim(grad, weights, learn/downstream.size());
-        weights_t = weights.t();
-
-        Mat grad_cpu; grad.copyTo(grad_cpu);
-        return sum(abs(grad_cpu))[0];
+        if (training)
+        {
+            // grad /= downstream.size();
+            // weights -= grad * learn;
+            optim_w(grad, weights, learn/downstream.size());
+            optim_b(gradB, bias, learn/downstream.size());
+            weights_t = weights.t();
+        }
+        return 0.0f;
     }
 
     virtual void show(String winName)
@@ -129,6 +167,7 @@ struct Fully : BaseWeights
     }
 };
 
+/*
 template <typename Optimizer>
 struct Rnn : BaseWeights 
 {
@@ -210,9 +249,7 @@ struct Rnn : BaseWeights
         //scaleAdd(grad, -learn/downstream.size(), weights, weights);
         optim_w(grad, weights, learn/downstream.size());
         weights_t = weights.t();
-
-        Mat grad_cpu; grad.copyTo(grad_cpu);
-        return sum(abs(grad_cpu))[0];
+        return 0.0f;
     }
 
     virtual void show(String winName)
@@ -314,7 +351,8 @@ struct Softmax : BaseWeights
             UMat d;
             reduce(prob, d, 0, REDUCE_SUM);
             //cerr << db.size() << d.size() << endl;
-            add(db, d.t(), db);           
+            add(db, d.reshape(1,d.total()), db);           
+            //add(db, d.t(), db);           
         }
         // grad /= downstream.size();
         // weights -= grad * learn;
@@ -328,9 +366,7 @@ struct Softmax : BaseWeights
             optim_b(db, bias, learn/downstream.size());
             weights_t = weights.t();
         }
-    
-        Mat grad_cpu; grad.copyTo(grad_cpu);
-        return sum(abs(grad_cpu))[0];
+        return 0.0f;
     }
 
     virtual void show(String winName)
@@ -418,6 +454,7 @@ struct RBM : BaseWeights
     }
 };
 
+*/
 
 struct Activation : Layer
 {
@@ -443,6 +480,8 @@ struct Activation : Layer
     virtual String type() {return _n;}
     virtual String desc() {return _n;}
 };
+
+
 
 
 struct Dropout : Layer
@@ -609,15 +648,6 @@ struct XNN : Network
             String type;
             n["type"] >> type;
             Ptr<Layer> layer;
-            if (type=="fully")    layer = makePtr<Fully<SGD>>("fully");
-            if (type=="fully_mom")layer = makePtr<Fully<momentum>>("fully_mom");
-            if (type=="fully_ada")layer = makePtr<Fully<adagrad>>("fully_ada");
-            if (type=="fully_rms")layer = makePtr<Fully<RMSprop>>("fully_rms");
-            if (type=="softmax")  layer = makePtr<Softmax<SGD>>("softmax");
-            if (type=="softmax_mom") layer = makePtr<Softmax<momentum>>("softmax_mom");
-            if (type=="softmax_rms") layer = makePtr<Softmax<RMSprop>>("softmax_rms");
-            if (type=="rbm")      layer = makePtr<RBM<SGD>>();
-            if (type=="rnn")      layer = makePtr<Rnn<SGD>>();
             if (type=="sigmoid")  layer = makePtr<Activation>(sigmoid,sigmoid_bp,"sigmoid");
             if (type=="relu")     layer = makePtr<Activation>(relu,relu_bp,"relu");
             if (type=="tanh")     layer = makePtr<Activation>(tanh_fw,tanh_bw,"tanh");
@@ -626,6 +656,16 @@ struct XNN : Network
             if (type=="minmax")   layer = makePtr<Activation>(minmax,minmax,"minmax");
             if (type=="dropout")  layer = makePtr<Dropout>();
             if (type=="batchnorm")layer = makePtr<BatchNorm>();
+
+            if (type=="fully")    layer = makePtr<Fully<SGD, LinearLoss>>("fully");
+            if (type=="fully_mom")layer = makePtr<Fully<momentum, LinearLoss>>("fully_mom");
+            if (type=="fully_ada")layer = makePtr<Fully<adagrad, LinearLoss>>("fully_ada");
+            if (type=="fully_rms")layer = makePtr<Fully<RMSprop, LinearLoss>>("fully_rms");
+            if (type=="softmax")  layer = makePtr<Fully<SGD,SoftmaxLoss>>("softmax");
+            if (type=="softmax_mom") layer = makePtr<Fully<momentum,SoftmaxLoss>>("softmax_mom");
+            if (type=="softmax_rms") layer = makePtr<Fully<RMSprop,SoftmaxLoss>>("softmax_rms");
+            //if (type=="rbm")      layer = makePtr<RBM<SGD>>();
+            //if (type=="rnn")      layer = makePtr<Rnn<SGD>>();
             if (layer.empty())
             {
                 CV_Error(0, format("unknown layer(%d): ", i) + type);

@@ -58,7 +58,7 @@ int main(int argc, char **argv)
             "{ loss l         |0.05 | stop training if loss is less }"
             "{ problem p      |mnist| input problem(att,mnist,digits,numbers,tv10) }"
             "{ network n      |nn/mnist_3.xml| preconfigured network to load }"
-            "{ save s         |my.xml.gz| filename of saved trained model }"
+            "{ save s         |my.xml| filename of saved trained model }"
             ;
 
     CommandLineParser parser(argc, argv, keys);
@@ -93,11 +93,10 @@ int main(int argc, char **argv)
             PROFILEX("train_problem")
             problem->train(batchSize, data, labels);
         }
-        float e1=0,e2=0,x0=0;
         {
             PROFILEX("train_pass")
-            x0 = nn->forward(data, res, true);
-            e2 = nn->backward(res1, labels, true);
+            nn->forward(data, res, true);
+            nn->backward(res1, labels, true);
         }
         
         if (g % report == 0)
@@ -106,7 +105,7 @@ int main(int argc, char **argv)
             float acc = accuracy(labels, res);
             float loss_fw = loss(labels, res);
             float loss_bw = loss(data, res1);
-            cout << format("%-5d  %7.2f  %3.3f  %3.3f  %3.6f", g, e2, loss_fw, loss_bw, acc) << endl;
+            cout << format("%-5d  %3.3f  %3.3f  %3.6f", g, loss_fw, loss_bw, acc) << endl;
             if (data[0].cols>7)
             {
                 imshow("input", viz(data, problem->inputSize().width));
@@ -122,13 +121,13 @@ int main(int argc, char **argv)
     problem->test(100, data, labels);
    
     nn->forward(data, predicted, false);
-    float loss_fw = loss(data, predicted);
+    float loss_fw = loss(labels, predicted);
     
     nn->backward(res1, labels, false);
-    float loss_bw = loss(res1, labels);
+    float loss_bw = loss(res1, data);
 
     float acc = accuracy(labels, predicted);
-    cout << "final acc : " << acc << " loss : " << loss_fw << " / " << loss_bw << endl;
+    cout << "final loss : " << loss_fw << " : " << loss_bw << " acc :  " << acc << endl;
     
     nn->save(saveFile);
     return 0;
