@@ -18,18 +18,18 @@ typedef UMat (*proc)(const UMat &);
 #include "optimizer.cpp"
 
 
-struct LinearLoss
+struct LossLinear
 {
-    void operator()(const UMat &predicted,const UMat &truth, UMat &res) const
+    void operator()(const UMat &predicted, const UMat &truth, UMat &res) const
     {
         PROFILEX("loss_linear");
         subtract(predicted,truth,res);
     }
 };
 
-struct SoftmaxLoss
+struct LossSoftmax
 {
-    void operator()(const UMat &predicted,const UMat &truth, UMat &res) const
+    void operator()(const UMat &predicted, const UMat &truth, UMat &res) const
     {
         PROFILEX("loss_softmax");
         UMat prob, mask;
@@ -40,6 +40,19 @@ struct SoftmaxLoss
 
         truth.convertTo(mask,CV_8U);
         subtract(prob, -1, res, mask);
+    }
+};
+
+struct LossMseSqr
+{
+    void operator()(const UMat &predicted, const UMat &truth, UMat &res) const
+    {
+        PROFILEX("loss_mse");
+        UMat A = predicted.reshape(1,1);
+        UMat B = truth.reshape(1,1);
+        UMat c;
+        subtract(A, B, c);
+        multiply(c, c, res);
     }
 };
 
@@ -167,294 +180,6 @@ struct Fully : BaseWeights
     }
 };
 
-/*
-template <typename Optimizer>
-struct Rnn : BaseWeights 
-{
-    Optimizer optim_w, optim_u;
-    deque<UMat> past;
-    Volume cache_up, cache_dn;
-    proc act_fw, act_bw;
-    UMat U, U_t;
-    Rnn(String n="Rnn"): BaseWeights(n) {}
-
-    UMat signal(const UMat &W, const UMat &U, const UMat &x, const UMat &last, proc act)
-    {
-        // act(last*U + x*W);
-        UMat r;
-        gemm(x, W, 1, noArray(), 0, r);
-        if (! last.empty())
-        {
-            gemm(last, U, 1, r, 1, r);
-        }
-        return act(r);
-    }
-    
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
-    {   
-        PROFILEX("rnn_forward");
-        downstream.resize(upstream.size());
-        for (size_t i=0; i<upstream.size(); i++)
-        {
-            // dn = up * weights + bias
-            UMat up = upstream[i].reshape(1,1);
-            past.push_back(up);
-            UMat dn; // empty for the most left(oldest)
-            for (size_t h=0; h<past.size(); h++)
-            {
-                dn = signal(weights, U, past[h], dn, act_fw);
-            }
-            downstream[i] = dn;
-            if (past.size()>=3)
-                past.pop_front();
-        }
-        if (training)
-        {
-            cache_up = upstream;
-            cache_dn = downstream;
-        }
-        return 0;
-    }
-
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
-    {   
-        PROFILEX("rbm_backward");
-        upstream.resize(downstream.size());
-        UMat grad(weights.size(), weights.type(), 0.0f);
-        UMat gradU(U.size(), U.type(), 0.0f);
-        //#pragma omp parallel for
-        for (size_t i=0; i<downstream.size(); i++)
-        {
-            UMat dn = downstream[i];
-            // up = dn * wt;
-            UMat up;
-            gemm(dn, weights_t, 1, noArray(), 0, up);
-            upstream[i] = up;
-            if (! training)
-                continue;
-            // residual = predicted - truth
-            UMat pred = cache_dn[i];
-            UMat res;
-            subtract(pred, dn, res);
-            // dx = c.t() * res;
-            // grad += dx;
-            UMat c = cache_up[i];
-            c = c.reshape(1, c.total());
-            gemm(c, res, 1, grad, 1, grad);
-        }
-        if (! training)
-            return 0.0f;
-        // grad /= downstream.size();
-        // weights -= grad * learn;
-        //scaleAdd(grad, -learn/downstream.size(), weights, weights);
-        optim_w(grad, weights, learn/downstream.size());
-        weights_t = weights.t();
-        return 0.0f;
-    }
-
-    virtual void show(String winName)
-    {
-        namedWindow(winName);
-        imshow(winName,viz(weights));
-        namedWindow(winName+"U");
-        imshow(winName+"U",viz(U));
-    }
-    virtual bool write(FileStorage &fs) 
-    {
-        BaseWeights::write(fs);
-        Mat u = U.getMat(ACCESS_READ);
-        fs << "U" << u;
-        return true;
-    }
-    virtual bool read(const FileNode &fn) 
-    {
-        BaseWeights::read(fn);
-        Mat u;
-        fn["U"] >> u;
-        if (u.empty())
-        {
-            U = rand(weights.cols, weights.rows, 0.01);
-            U_t = U.t();
-        }
-        else
-        {
-            u.copyTo(U);
-        }
-        return true;
-    }    
-};
-
-//
-// https://cs231n.github.io/neural-networks-case-study/#linear
-//  (minus the loss calculation)
-//
-template <typename Optimizer>
-struct Softmax : BaseWeights
-{
-    Optimizer optim_w, optim_b;
-    Volume cache_up, cache_dn;
-    float reg;
-    Softmax(String n="softmax"): BaseWeights(n) {}
-
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
-    {   
-        PROFILEX("softmax_forward");
-        downstream.resize(upstream.size());
-        for (size_t i=0; i<upstream.size(); i++)
-        {
-            // dn = up * weights
-            // cerr << up.size() << weights.size() << bias.size() << endl;          
-            UMat up = upstream[i].reshape(1,1);
-            gemm(up, weights, 1, bias, 1, downstream[i], GEMM_3_T);        
-        }
-        if (training)
-        {
-            cache_up = upstream;
-            cache_dn = downstream;
-        }
-        return 0;
-    }
-
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
-    {   
-        PROFILEX("softmax_backward");
-        upstream.resize(downstream.size());
-        UMat grad(weights.size(), weights.type(), 0.0f);
-        UMat db(bias.size(), bias.type(), 0.0f);
-        //#pragma omp parallel for
-        for (size_t i=0; i<downstream.size(); i++)
-        {
-            UMat dn = downstream[i];
-            // up = dn * wt + bias;
-            UMat up;
-            gemm(dn, weights_t, 1, noArray(), 0, up);
-
-            upstream[i] = up;
-            if (! training)
-                continue;
-
-            UMat pred = cache_dn[i];
-            UMat prob, rsum;
-            exp(pred, prob);
-            Scalar total = sum(prob);
-            divide(prob, total[0], prob);
-
-            UMat mask,res;
-            dn.convertTo(mask,CV_8U);
-            subtract(prob, -1, res, mask);
-            // dx = c.t() * res;
-            // grad += dx;
-            UMat c = cache_up[i];
-            c = c.reshape(1, c.total());
-            gemm(c, res, 1.0/downstream.size(), grad, 1, grad);
-
-            UMat d;
-            reduce(prob, d, 0, REDUCE_SUM);
-            //cerr << db.size() << d.size() << endl;
-            add(db, d.reshape(1,d.total()), db);           
-            //add(db, d.t(), db);           
-        }
-        // grad /= downstream.size();
-        // weights -= grad * learn;
-        //scaleAdd(grad, -learn/downstream.size(), weights, weights);
-        
-        //float reg = 0.05;
-        //scaleAdd(weights, reg, grad, grad);
-        if (training)
-        {
-            optim_w(grad, weights, learn/downstream.size());
-            optim_b(db, bias, learn/downstream.size());
-            weights_t = weights.t();
-        }
-        return 0.0f;
-    }
-
-    virtual void show(String winName)
-    {
-        namedWindow(winName);
-        imshow(winName,viz(weights));
-    }
-};
-
-
-template <typename Optimizer>
-struct RBM : BaseWeights
-{
-    Optimizer optim;
-    UMat hidden;
-    Volume cache_up, cache_dn, cache_hidden;
-  
-    RBM(String n="rbm"): BaseWeights(n) {}
-    UMat dream_wake(const UMat &m)
-    {
-        PROFILEX("rbm_dream_wake")
-        UMat dream;
-        gemm(m, weights, 1, noArray(), 0, dream);
-        hidden = tanh2_fw(dream);
-        //hidden = sigmoid(dream);
-
-        UMat wake;
-        gemm(hidden, weights_t, 1, noArray(), 0, wake);
-        return tanh2_fw(wake);
-        //return sigmoid(wake);
-    }
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
-    {
-        PROFILEX("rbm_forward")
-        if (training)
-        {
-            cache_hidden.resize(upstream.size());
-        }
-        downstream.resize(upstream.size());
-        for (size_t i=0; i<upstream.size(); i++)
-        {
-            UMat up = upstream[i].reshape(1,1);
-            UMat dn = dream_wake(up);
-            if (training)
-                cache_hidden[i] = hidden;
-            downstream[i] = dn;
-        }
-        if (training)
-        {
-            cache_up = upstream;
-            cache_dn = downstream;
-        }
-    }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
-    {
-        PROFILEX("rbm_backward")
-        UMat grad(weights.size(), weights.type(), 0.0f);
-        upstream.resize(downstream.size());
-        for (size_t i=0; i<downstream.size(); i++)
-        {
-            UMat dn = downstream[i];
-            UMat up = dream_wake(dn);
-            upstream[i] = up;
-
-            UMat dx1;
-            gemm(dn, cache_hidden[i], 1, noArray(), 0, dx1, GEMM_1_T);
-            UMat dx2;
-            //gemm(up, hidden, 1, noArray(), 0, dx2, GEMM_1_T);
-            gemm(cache_up[i].reshape(1,1), hidden, 1, noArray(), 0, dx2, GEMM_1_T);
-
-            UMat dx;
-            subtract(dx1, dx2, dx);
-            add(grad, dx, grad);
-        }
-        optim(grad, weights, learn/downstream.size());
-        transpose(weights, weights_t);
-    }
-    virtual String type() { return "rbm"; }
-    virtual void show(String winName)
-    {
-        namedWindow(winName+"_weights");
-        imshow(winName+"_weights", viz(weights));
-        namedWindow(winName+"_hidden");
-        imshow(winName+"_hidden", viz(cache_hidden, int(sqrt(double(hidden.cols)))));
-    }
-};
-
-*/
 
 struct Activation : Layer
 {
@@ -657,13 +382,13 @@ struct XNN : Network
             if (type=="dropout")  layer = makePtr<Dropout>();
             if (type=="batchnorm")layer = makePtr<BatchNorm>();
 
-            if (type=="fully")    layer = makePtr<Fully<SGD, LinearLoss>>("fully");
-            if (type=="fully_mom")layer = makePtr<Fully<momentum, LinearLoss>>("fully_mom");
-            if (type=="fully_ada")layer = makePtr<Fully<adagrad, LinearLoss>>("fully_ada");
-            if (type=="fully_rms")layer = makePtr<Fully<RMSprop, LinearLoss>>("fully_rms");
-            if (type=="softmax")  layer = makePtr<Fully<SGD,SoftmaxLoss>>("softmax");
-            if (type=="softmax_mom") layer = makePtr<Fully<momentum,SoftmaxLoss>>("softmax_mom");
-            if (type=="softmax_rms") layer = makePtr<Fully<RMSprop,SoftmaxLoss>>("softmax_rms");
+            if (type=="fully")    layer = makePtr<Fully<SGD, LossLinear>>("fully");
+            if (type=="fully_mom")layer = makePtr<Fully<momentum, LossLinear>>("fully_mom");
+            if (type=="fully_ada")layer = makePtr<Fully<adagrad, LossLinear>>("fully_ada");
+            if (type=="fully_rms")layer = makePtr<Fully<RMSprop, LossLinear>>("fully_rms");
+            if (type=="softmax")  layer = makePtr<Fully<SGD, LossSoftmax>>("softmax");
+            if (type=="softmax_mom") layer = makePtr<Fully<momentum, LossSoftmax>>("softmax_mom");
+            if (type=="softmax_rms") layer = makePtr<Fully<RMSprop, LossSoftmax>>("softmax_rms");
             //if (type=="rbm")      layer = makePtr<RBM<SGD>>();
             //if (type=="rnn")      layer = makePtr<Rnn<SGD>>();
             if (layer.empty())

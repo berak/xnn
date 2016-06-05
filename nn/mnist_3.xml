@@ -2,19 +2,19 @@
 <opencv_storage>
 <layers>
   <_><type>fully</type>
-     <weight_init>0.5</weight_init>
-  	 <learn>0.01</learn>
+     <weight_init>0.15</weight_init>
+  	 <learn>0.001</learn>
      <size>144 784</size></_>
   <_><type>sigmoid</type></_>
   <_><type>fully</type>
-     <weight_init>0.02</weight_init>
-     <learn>0.01</learn>
+     <weight_init>0.2</weight_init>
+     <learn>0.001</learn>
      <size>36 144</size></_>
   <!--_><type>dropout</type></_-->
   <_><type>sigmoid</type></_>
   <_><type>softmax</type>
-     <weight_init>0</weight_init>
-  	 <learn>0.01</learn>
+     <weight_init>0.2</weight_init>
+  	 <learn>0.001</learn>
      <size>10 36</size></_>
 </layers>
 </opencv_storage>
