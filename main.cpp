@@ -118,7 +118,7 @@ int main(int argc, char **argv)
     }  
 
     Volume data,predicted,labels,res1;
-    problem->test(100, data, labels);
+    problem->test(200, data, labels);
    
     nn->forward(data, predicted, false);
     float loss_fw = loss(labels, predicted);

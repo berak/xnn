@@ -1,20 +1,21 @@
 <?xml version="1.0"?>
 <opencv_storage>
 <layers>
-  <_><type>fully_rms</type>
+  <_><type>fully</type>
      <weight_init>0.1</weight_init>
-  	 <learn>0.01</learn>
+  	 <learn>0.005</learn>
      <size>144 900</size></_>
   <_><type>sigmoid</type></_>
-  <_><type>dropout</type></_>
-  <_><type>fully_rms</type>
+  <!--_><type>dropout</type></_-->
+  <_><type>fully</type>
      <weight_init>0.1</weight_init>
-     <learn>0.01</learn>
+     <learn>0.005</learn>
      <size>36 144</size></_>
+  <!--_><type>batchnorm</type></_-->
   <_><type>sigmoid</type></_>
-  <_><type>fully_rms</type>
-     <weight_init>0.3</weight_init>
-  	 <learn>0.01</learn>
+  <_><type>fully</type>
+     <weight_init>0.1</weight_init>
+  	 <learn>0.005</learn>
      <size>40 36</size></_>
 </layers>
 </opencv_storage>

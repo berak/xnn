@@ -120,3 +120,15 @@ UMat dropout(const UMat &m)
     multiply(m, mask, res, 1.0/(prob*255), CV_32F);
     return res;
 }
+
+UMat softmax(const UMat &m)
+{
+    UMat prob;
+    double maxVal=0;
+    minMaxLoc(m, 0, &maxVal);
+    subtract(m, maxVal, prob);
+    exp(prob, prob);
+    Scalar total = sum(prob);
+    divide(prob, total[0], prob);
+    return prob;  
+}

@@ -20,39 +20,43 @@ typedef UMat (*proc)(const UMat &);
 
 struct LossLinear
 {
-    void operator()(const UMat &predicted, const UMat &truth, UMat &res) const
+    UMat operator()(const UMat &predicted, const UMat &truth) const
     {
         PROFILEX("loss_linear");
+        UMat res;
         subtract(predicted,truth,res);
+        return res;
     }
 };
 
 struct LossSoftmax
 {
-    void operator()(const UMat &predicted, const UMat &truth, UMat &res) const
+    UMat operator()(const UMat &predicted, const UMat &truth) const
     {
         PROFILEX("loss_softmax");
-        UMat prob, mask;
+        UMat prob, mask, res;
 
         exp(predicted, prob);
         Scalar total = sum(prob);
         divide(prob, total[0], prob);
 
-        truth.convertTo(mask,CV_8U);
+        truth.convertTo(mask, CV_8U, 1.0/255);
         subtract(prob, -1, res, mask);
+        return res;
     }
 };
 
 struct LossMseSqr
 {
-    void operator()(const UMat &predicted, const UMat &truth, UMat &res) const
+    UMat operator()(const UMat &predicted, const UMat &truth) const
     {
         PROFILEX("loss_mse");
         UMat A = predicted.reshape(1,1);
         UMat B = truth.reshape(1,1);
-        UMat c;
+        UMat c,res;
         subtract(A, B, c);
         multiply(c, c, res);
+        return res;
     }
 };
 
@@ -66,10 +70,10 @@ struct BaseWeights :  Layer
 
     virtual bool write(FileStorage &fs) 
     {
-        Mat m = weights.getMat(ACCESS_READ);
+        Mat w = weights.getMat(ACCESS_READ);
         Mat b = bias.getMat(ACCESS_READ);
         fs << "size" << weights.size();
-        fs << "weights" << m;
+        fs << "weights" << w;
         fs << "bias" << b;
         fs << "learn" << learn;
         fs << "weight_init" << weight_init;
@@ -79,19 +83,19 @@ struct BaseWeights :  Layer
     {
         Size siz;
         fn["size"] >> siz;
-        Mat m,b;
-        fn["weights"] >> m;
+        Mat w,b;
+        fn["weights"] >> w;
         fn["bias"] >> b;
         weight_init = 0.5f;
         fn["weight_init"] >> weight_init;
-        if (m.empty() && siz.area())
+        if (w.empty() && siz.area())
         {
             weights = rand(siz.height, siz.width, weight_init);
             bias = UMat(siz.width, 1, CV_32F, 0.0f);
         }
         else
         {
-            m.copyTo(weights);
+            w.copyTo(weights);
             b.copyTo(bias);
         }
         weights_t = weights.t();
@@ -101,6 +105,7 @@ struct BaseWeights :  Layer
     virtual String type() { return name; }
     virtual String desc() { return format("%s(%d,%d,%1.3f,%1.3f)",name.c_str(), weights.cols, weights.rows, learn, weight_init); }
 };
+
 
 template <typename Optimizer, typename Loss>
 struct Fully : BaseWeights 
@@ -137,29 +142,25 @@ struct Fully : BaseWeights
         //#pragma omp parallel for
         for (size_t i=0; i<downstream.size(); i++)
         {
-            UMat dn = downstream[i];
             // up = dn * wt;
-            UMat up;
-            gemm(dn, weights_t, 1, noArray(), 0, up);
-            upstream[i] = up;
-            if (!training)
+            UMat dn = downstream[i];
+            gemm(dn, weights_t, 1, noArray(), 0, upstream[i]); // bias ?
+            if (! training)
                 continue;
+            
             // residual = predicted - truth
             UMat pred = cache_dn[i];
-            UMat res;
-            loss(pred, dn, res);
+            UMat res = loss(pred, dn);
+            
             // dx = c.t() * res;
             // grad += dx;
             UMat c = cache_up[i];
             c = c.reshape(1, c.total());
             gemm(c, res, 1, grad, 1, grad);
+            
             // bias, too.
             UMat db;
             reduce(res, db, 0, REDUCE_SUM);
-            /*//cerr << db.size() << d.size() << endl;
-            add(db, d.reshape(1,d.total()), db);           
-            UMat db;
-            reduce(grad, db, 1, REDUCE_SUM);*/
             add(gradB, gradB, db.reshape(1,db.total()));
         }
         if (training)
@@ -178,6 +179,137 @@ struct Fully : BaseWeights
         namedWindow(winName);
         imshow(winName,viz(weights));
     }
+};
+
+template <typename Optimizer>
+struct Rnn : BaseWeights 
+{
+    Optimizer optim_w, optim_u;
+    deque<UMat> past;
+    Volume cache_up, cache_dn;
+    proc act_fw, act_bw;
+    UMat U, U_t;
+    int hidden;
+
+    Rnn(String n="rnn"): BaseWeights(n), hidden(3), act_fw(tanh2_fw), act_bw(tanh2_bw) {}
+
+    static UMat signal(const UMat &W, const UMat &U, const UMat &x, const UMat &last, proc act)
+    {
+        // act(last*U + x*W);
+        // cerr << W.size() << " " << U.size() << " " << x.size() << " " << last.size() << " " ;
+        UMat r;
+        gemm(x, W, 1, noArray(), 0, r);
+        // cerr << r.size() << endl;
+        if (! last.empty())
+        {
+            UMat r2;
+            gemm(last, U, 1, r, 1, r2);
+            r = r2;
+        }
+        return act(r);
+    }
+    
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
+    {   
+        PROFILEX("rnn_forward");
+        downstream.resize(upstream.size());
+        for (size_t i=0; i<upstream.size(); i++)
+        {
+            // dn = up * weights + bias
+            UMat up = upstream[i].reshape(1,1);
+            past.push_back(up);
+            UMat dn; // empty for the most left(oldest)
+            for (size_t h=0; h<past.size(); h++)
+            {
+                dn = signal(weights, U, past[h], dn, act_fw);
+            }
+            downstream[i] = dn;
+            if (past.size() >= hidden)
+                past.pop_front();
+        }
+        if (training)
+        {
+            cache_up = upstream;
+            cache_dn = downstream;
+        }
+        //cerr << "fw " << past.size() << "  " << downstream.size() << " " << training << endl;
+        return 0;
+    }
+
+    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
+    {   
+        //cerr << "bw " << downstream.size() << " " << training << endl;
+        PROFILEX("rnn_backward");
+        UMat grad, gradU;
+        if (training)
+        {
+            grad = UMat(weights.size(), weights.type(), 0.0f);
+            gradU = UMat(U.size(), U.type(), 0.0f);
+        }
+
+        upstream.resize(downstream.size());
+        for (size_t i=0; i<downstream.size(); i++)
+        {
+            UMat dn = downstream[i];
+            // up = dn * wt;
+            UMat up;
+            // cerr << "$ " << i << "  " << dn.size() <<  " " << weights_t.size() << " " << endl;
+            gemm(dn, weights_t, 1, noArray(), 0, up);
+            upstream[i] = up;
+            if (! training)
+                continue;
+            // residual = predicted - truth
+            UMat pred = cache_dn[i];
+            UMat res;
+            subtract(pred, dn, res);
+            // dx = c.t() * res;
+            // grad += dx;
+            UMat c = cache_up[i];
+            c = c.reshape(1, c.total());
+            gemm(c, res, 1, grad, 1, grad);
+        }
+        if (! training)
+            return 0.0f;
+        optim_w(grad, weights, learn/downstream.size());
+        weights_t = weights.t();
+        return 0.0f;
+    }
+
+    virtual void show(String winName)
+    {
+        namedWindow(winName);
+        imshow(winName,viz(weights));
+        namedWindow(winName+"U");
+        imshow(winName+"U",viz(U));
+    }
+    virtual bool write(FileStorage &fs) 
+    {
+        BaseWeights::write(fs);
+        Mat u = U.getMat(ACCESS_READ);
+        fs << "U" << u;
+        fs << "hidden" << hidden;
+        return true;
+    }
+    virtual bool read(const FileNode &fn) 
+    {
+        BaseWeights::read(fn);
+        Mat u;
+        fn["U"] >> u;
+        if (u.empty())
+        {
+            U = rand(weights.cols, weights.cols, 0.01);
+            U_t = U.t();
+        }
+        else
+        {
+            u.copyTo(U);
+        }
+        int h=0;
+        fn["hidden"] >> h;
+        if (h>0) hidden=h;
+        return true;
+    }    
+    virtual String desc() { return format("%s %d(%d,%d),(%d,%d),(%1.3f,%1.3f)", name.c_str(), hidden, weights.cols, weights.rows, U.cols, U.rows, learn, weight_init); }
 };
 
 
@@ -205,7 +337,6 @@ struct Activation : Layer
     virtual String type() {return _n;}
     virtual String desc() {return _n;}
 };
-
 
 
 
@@ -239,6 +370,7 @@ struct BatchNorm : Layer
     {
         PROFILEX("batchnorm")
         to.resize(from.size());
+        // global
         Scalar m,s, M, S;
         for (size_t i=0; i<from.size(); i++)
         {
@@ -253,23 +385,24 @@ struct BatchNorm : Layer
             subtract(from[0], M, to[i]);
             divide(to[i], S[0]+0.0000001, to[i]);
         }
-        /*UMat m(from[0].size(), from[0].type(), 0.0f);
+        /*// per pixel
+        UMat m(from[0].size(), from[0].type(), 0.0f);
         for (size_t i=0; i<from.size(); i++)
-            add(from[0], m, m);
+            add(from[i], m, m);
         divide(m, from.size(), m);
 
         UMat v(from[0].size(), from[0].type(), 0.00000001f);
         for (size_t i=0; i<from.size(); i++) 
         {
             UMat s;
-            subtract(from[0], m, s);
+            subtract(from[i], m, s);
             multiply(s,s,s);
             add(v,s,v);
         }
         divide(v, from.size(), v);
         for (size_t i=0; i<from.size(); i++) 
         {
-            subtract(from[0], m, to[i]);
+            subtract(from[i], m, to[i]);
             divide(to[i], v, to[i]);
         }*/
         return 0;
@@ -316,6 +449,7 @@ struct XNN : Network
         Volume a(up), b;
         for (size_t i=0; i<layers.size(); i++)
         {
+            //cerr << "fw " << i << " " << layers[i]->desc() << " " << a.size() << " " << b.size() << " " << training << endl;
             layers[i]->forward(a,b, training);
             cv::swap(a,b);
         }
@@ -329,6 +463,7 @@ struct XNN : Network
         Volume a, b(dn);
         for (int i=int(layers.size())-1; i>=0; i--)
         {
+            //cerr << "bw " << i << " " << layers[i]->desc() << " " << a.size() << " " << b.size() << " " << training << endl;
             e = layers[i]->backward(a,b,training);
             cv::swap(a,b);
         }
@@ -358,7 +493,6 @@ struct XNN : Network
     }
     virtual bool load(String  fn)
     {
-
         FileStorage fs(fn,0);
         if (!fs.isOpened())
         {
@@ -381,7 +515,6 @@ struct XNN : Network
             if (type=="minmax")   layer = makePtr<Activation>(minmax,minmax,"minmax");
             if (type=="dropout")  layer = makePtr<Dropout>();
             if (type=="batchnorm")layer = makePtr<BatchNorm>();
-
             if (type=="fully")    layer = makePtr<Fully<SGD, LossLinear>>("fully");
             if (type=="fully_mom")layer = makePtr<Fully<momentum, LossLinear>>("fully_mom");
             if (type=="fully_ada")layer = makePtr<Fully<adagrad, LossLinear>>("fully_ada");
@@ -390,7 +523,7 @@ struct XNN : Network
             if (type=="softmax_mom") layer = makePtr<Fully<momentum, LossSoftmax>>("softmax_mom");
             if (type=="softmax_rms") layer = makePtr<Fully<RMSprop, LossSoftmax>>("softmax_rms");
             //if (type=="rbm")      layer = makePtr<RBM<SGD>>();
-            //if (type=="rnn")      layer = makePtr<Rnn<SGD>>();
+            if (type=="rnn")      layer = makePtr<Rnn<SGD>>();
             if (layer.empty())
             {
                 CV_Error(0, format("unknown layer(%d): ", i) + type);
@@ -459,4 +592,3 @@ Mat viz(const UMat &weights)
 }
 
 } // namespace nn
-
