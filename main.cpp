@@ -59,6 +59,7 @@ int main(int argc, char **argv)
             "{ problem p      |mnist| input problem(att,mnist,digits,numbers,tv10) }"
             "{ network n      |nn/mnist_3.xml| preconfigured network to load }"
             "{ save s         |my.xml| filename of saved trained model }"
+            "{ visual v       |1    | show visuals in gui(or save to file) }"
             ;
 
     CommandLineParser parser(argc, argv, keys);
@@ -75,7 +76,7 @@ int main(int argc, char **argv)
     int useOCL(parser.get<int>("ocl"));
     int batchSize(parser.get<int>("batch"));
     float minLoss(parser.get<float>("loss"));
-
+    bool visual(parser.get<int>("visual"));
     ocl::setUseOpenCL(useOCL);
     cout << "ocl " << cv::ocl::useOpenCL() << endl;
 
@@ -108,11 +109,24 @@ int main(int argc, char **argv)
             cout << format("%-5d  %3.3f  %3.3f  %3.6f", g, loss_fw, loss_bw, acc) << endl;
             if (data[0].cols>7)
             {
-                imshow("input", viz(data, problem->inputSize().width));
-                imshow("back",  viz(res1, problem->inputSize().width));
-                nn->show();
+                if (visual)
+                {
+                    imshow("input", viz(data, problem->inputSize().width));
+                    imshow("back",  viz(res1, problem->inputSize().width));
+                    nn->show();
+                }
+                else
+                {
+                    Mat gr = viz(data, problem->inputSize().width);
+                    gr.convertTo(gr,CV_8U,255); 
+                    imwrite("img/input.png", gr);
+
+                    gr = viz(res1, problem->inputSize().width);
+                    gr.convertTo(gr,CV_8U,255); 
+                    imwrite("img/back.png", gr);
+                }
             }
-            if (waitKey(50)==27) return 0;
+            if (visual && waitKey(50)==27) return 0;
             if (loss_fw < minLoss) break;
         }
     }  

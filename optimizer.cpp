@@ -8,6 +8,7 @@ struct SGD
     {
         PROFILEX("SGD");
         // W -= alpha * grad
+        //cerr <<  "sgd:  " << grad.size() << " " << weights.size() << endl;
         scaleAdd(grad, -learn, weights, weights);
         return weights;
     }

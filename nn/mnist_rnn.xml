@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <opencv_storage>
 <layers>
-  <_><type>rnn</type>
+  <_><type>recurrent</type>
      <hidden>2</hidden>
-     <weight_init>0.01</weight_init>
-  	 <learn>0.005</learn>
+     <weight_init>0.001</weight_init>
+  	 <learn>0.0005</learn>
      <size>144 784</size></_>
   <_><type>relu</type></_>
   <!--_><type>rnn</type>
@@ -14,8 +14,8 @@
      <size>49 144</size></_-->
   <!--_><type>dropout</type></_-->
   <!--_><type>sigmoid</type></_-->
-  <_><type>softmax</type>
-     <weight_init>0.1</weight_init>
+  <_><type>softmax_rms</type>
+     <weight_init>0.001</weight_init>
   	 <learn>0.0005</learn>
      <size>10 144</size></_>
 </layers>

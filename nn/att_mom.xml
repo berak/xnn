@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
 <opencv_storage>
 <layers>
-  <_><type>fully_mom</type>
-     <weight_init>0.1</weight_init>
-  	 <learn>0.01</learn>
-     <size>144 900</size></_>
-  <_><type>sigmoid</type></_>
-  <_><type>fully_mom</type>
-     <weight_init>0.2</weight_init>
-  	 <learn>0.01</learn>
+  <_><type>fully</type>
+     <learn>0.0005</learn>
+     <weight_init>0.01</weight_init>
+     <size>225 900</size></_>
+  <_><type>relu</type></_>
+  <!--_><type>fully</type>
+     <learn>0.0005</learn>
+     <weight_init>0.012</weight_init>
      <size>144 144</size></_>
-  <_><type>sigmoid</type></_>
-  <_><type>fully_mom</type>
-     <weight_init>0.5</weight_init>
-  	 <learn>0.01</learn>
- 	 <size>40 144</size></_>
+  <_><type>sigmoid</type></_-->
+  <_><type>softmax_mom</type>
+     <weight_init>0.015</weight_init>
+     <learn>0.0005</learn>
+ 	 <size>40 225</size></_>
 </layers>
 </opencv_storage>

@@ -17,6 +17,17 @@ typedef UMat (*proc)(const UMat &);
 #include "activation.cpp"
 #include "optimizer.cpp"
 
+static UMat col(const UMat &m)
+{
+    PROFILE;
+    return m.reshape(1, m.total());
+}
+static UMat row(const UMat &m)
+{
+    PROFILE;
+    return m.reshape(1, 1);
+}
+
 
 struct LossLinear
 {
@@ -51,10 +62,8 @@ struct LossMseSqr
     UMat operator()(const UMat &predicted, const UMat &truth) const
     {
         PROFILEX("loss_mse");
-        UMat A = predicted.reshape(1,1);
-        UMat B = truth.reshape(1,1);
         UMat c,res;
-        subtract(A, B, c);
+        subtract(row(predicted), row(truth), c);
         multiply(c, c, res);
         return res;
     }
@@ -122,7 +131,7 @@ struct Fully : BaseWeights
         for (size_t i=0; i<upstream.size(); i++)
         {
             // dn = up * weights + bias
-            UMat up = upstream[i].reshape(1,1);
+            UMat up = row(upstream[i]);
             gemm(up, weights, 1, bias, 1, downstream[i], GEMM_3_T);
         }
         if (training)
@@ -154,8 +163,7 @@ struct Fully : BaseWeights
             
             // dx = c.t() * res;
             // grad += dx;
-            UMat c = cache_up[i];
-            c = c.reshape(1, c.total());
+            UMat c = col(cache_up[i]);
             gemm(c, res, 1, grad, 1, grad);
             
             // bias, too.
@@ -191,7 +199,7 @@ struct Rnn : BaseWeights
     UMat U, U_t;
     int hidden;
 
-    Rnn(String n="rnn"): BaseWeights(n), hidden(3), act_fw(tanh2_fw), act_bw(tanh2_bw) {}
+    Rnn(String n="recurrent"): BaseWeights(n), hidden(3), act_fw(tanh2_fw), act_bw(tanh2_bw) {}
 
     static UMat signal(const UMat &W, const UMat &U, const UMat &x, const UMat &last, proc act)
     {
@@ -199,7 +207,7 @@ struct Rnn : BaseWeights
         // cerr << W.size() << " " << U.size() << " " << x.size() << " " << last.size() << " " ;
         UMat r;
         gemm(x, W, 1, noArray(), 0, r);
-        // cerr << r.size() << endl;
+        //cerr << r.size() << endl;
         if (! last.empty())
         {
             UMat r2;
@@ -225,7 +233,9 @@ struct Rnn : BaseWeights
             }
             downstream[i] = dn;
             if (past.size() >= hidden)
+            {
                 past.pop_front();
+            }
         }
         if (training)
         {
@@ -250,28 +260,35 @@ struct Rnn : BaseWeights
         upstream.resize(downstream.size());
         for (size_t i=0; i<downstream.size(); i++)
         {
-            UMat dn = downstream[i];
             // up = dn * wt;
-            UMat up;
-            // cerr << "$ " << i << "  " << dn.size() <<  " " << weights_t.size() << " " << endl;
+            UMat up, dn = downstream[i];
             gemm(dn, weights_t, 1, noArray(), 0, up);
             upstream[i] = up;
             if (! training)
                 continue;
+           
             // residual = predicted - truth
             UMat pred = cache_dn[i];
             UMat res;
             subtract(pred, dn, res);
+            
             // dx = c.t() * res;
             // grad += dx;
-            UMat c = cache_up[i];
-            c = c.reshape(1, c.total());
-            gemm(c, res, 1, grad, 1, grad);
+            gemm(col(cache_up[i]), res, 1, grad, 1, grad);
+                       
+            UMat sig;
+            gemm(dn, U_t, 1, noArray(), 0, sig);
+            sig = act_bw(sig);
+           
+            gemm(col(sig), pred, 1, gradU, 1, gradU);
         }
         if (! training)
             return 0.0f;
-        optim_w(grad, weights, learn/downstream.size());
+        optim_w(grad, weights, 0.001);//learn/downstream.size());
         weights_t = weights.t();
+
+        optim_u(gradU, U, learn/downstream.size());
+        U_t = U.t();
         return 0.0f;
     }
 
@@ -297,13 +314,13 @@ struct Rnn : BaseWeights
         fn["U"] >> u;
         if (u.empty())
         {
-            U = rand(weights.cols, weights.cols, 0.01);
-            U_t = U.t();
+            U = rand(weights.cols, weights.cols, weight_init);
         }
         else
         {
             u.copyTo(U);
         }
+        U_t = U.t();
         int h=0;
         fn["hidden"] >> h;
         if (h>0) hidden=h;
@@ -523,7 +540,7 @@ struct XNN : Network
             if (type=="softmax_mom") layer = makePtr<Fully<momentum, LossSoftmax>>("softmax_mom");
             if (type=="softmax_rms") layer = makePtr<Fully<RMSprop, LossSoftmax>>("softmax_rms");
             //if (type=="rbm")      layer = makePtr<RBM<SGD>>();
-            if (type=="rnn")      layer = makePtr<Rnn<SGD>>();
+            if (type=="recurrent")layer = makePtr<Rnn<SGD>>();
             if (layer.empty())
             {
                 CV_Error(0, format("unknown layer(%d): ", i) + type);
