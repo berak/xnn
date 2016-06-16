@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<layers>
+  <_><type>fully</type>
+     <learn>0.0005</learn>
+     <weight_init>0.01</weight_init>
+     <size>400 1024</size></_>
+  <_><type>relu</type></_>
+  <!--_><type>fully</type>
+     <learn>0.0005</learn>
+     <weight_init>0.012</weight_init>
+     <size>144 144</size></_>
+  <_><type>sigmoid</type></_-->
+  <_><type>softmax_mom</type>
+     <weight_init>0.015</weight_init>
+     <learn>0.0005</learn>
+   <size>10 400</size></_>
+</layers>
+</opencv_storage>

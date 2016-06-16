@@ -127,6 +127,7 @@ struct Fully : BaseWeights
     virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
     {   
         PROFILEX("fully_forward");
+        //cerr << "fw " << upstream.size() << "  " << upstream[0].size() << " " << weights.size() << " " << bias.size() << endl;
         downstream.resize(upstream.size());
         for (size_t i=0; i<upstream.size(); i++)
         {
@@ -284,7 +285,7 @@ struct Rnn : BaseWeights
         }
         if (! training)
             return 0.0f;
-        optim_w(grad, weights, 0.001);//learn/downstream.size());
+        optim_w(grad, weights, learn/downstream.size());
         weights_t = weights.t();
 
         optim_u(gradU, U, learn/downstream.size());
