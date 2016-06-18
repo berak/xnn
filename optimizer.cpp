@@ -1,9 +1,10 @@
-// 
+//
 // all of it stolen from tiny-cnn..
 //
 
 struct SGD
 {
+    SGD(String n="") {}
     UMat operator()(const UMat &grad, UMat &weights, float learn)
     {
         PROFILEX("SGD");
@@ -12,12 +13,18 @@ struct SGD
         scaleAdd(grad, -learn, weights, weights);
         return weights;
     }
+    void write(FileStorage &fs) {}
+    void read(const FileNode &fn) {}
 };
 
 
 struct momentum
 {
-    momentum(float m=0.9f) : mu(m) {}
+    UMat G;
+    double mu;
+    String n;
+
+    momentum(String n="") : n(n), mu(0.9) {}
 
     UMat operator()(const UMat &grad, UMat &weights, float learn)
     {
@@ -30,23 +37,30 @@ struct momentum
             G=UMat(weights.size(), weights.type(), 0.0f);
         UMat V;
         multiply(G, mu, V);
-        scaleAdd(grad, -learn, V, V);
-        add(weights, V, weights);
-        G = V;
+        scaleAdd(grad, -learn, V, G);
+        add(weights, G, weights);
         return weights;
     }
-    UMat G;
-    float mu;
+    void write(FileStorage &fs)
+    {
+        fs << n + "G" << G.getMat(ACCESS_READ);
+    }
+    void read(const FileNode &fn)
+    {
+        Mat g;
+        fn[n + "G"] >> g;
+        g.copyTo(G);
+    }
 };
 
 
 // TODO: broken ?
-struct adagrad 
+struct adagrad
 {
-    adagrad(float e=1e-8f) : eps(e) {}
+    adagrad(String n="", float e=1e-8f) : n(n), eps(e) {}
 
     UMat operator()(const UMat &grad, UMat &weights, float learn)
-    {   
+    {
         PROFILEX("adagrad");
         //    g[i] += dW[i] * dW[i];
         //    W[i] -= alpha * dW[i] / (std::sqrt(g[i]) + eps);
@@ -58,27 +72,29 @@ struct adagrad
         add(G, a, G);
         sqrt(G, b);
         add(b, eps, b);
-        divide(grad, b, c); 
+        divide(grad, b, c);
         scaleAdd(c, -learn, weights, weights);
         return weights;
     }
+    void write(FileStorage &fs) {}
+    void read(const FileNode &fn) {}
 
-private:
     float_t eps;
     UMat G;
+    String n;
 };
 
 
 struct RMSprop
 {
-    RMSprop(float m=0.99f, float e=1e-8f) : mu(m), eps(e) {}
+    RMSprop(String n, float m=0.99f, float e=1e-8f) : n(n), mu(m), eps(e) {}
 
     UMat operator()(const UMat &grad, UMat &weights, float learn)
-    {   
+    {
         PROFILEX("RMSProp");
         //    g[i] = mu * g[i] + (1 - mu) * dW[i] * dW[i];
         //    W[i] -= alpha * dW[i] / std::sqrt(g[i] + eps);
-    
+
         if (G.empty())
             G=UMat(weights.size(), weights.type(), eps);
         UMat a,b,c;
@@ -90,9 +106,19 @@ struct RMSprop
         scaleAdd(c, -learn, weights, weights);
         return weights;
     }
+    void write(FileStorage &fs)
+    {
+        fs << n + "G" << G.getMat(ACCESS_READ);
+    }
+    void read(const FileNode &fn)
+    {
+        Mat g;
+        fn[n + "G"] >> g;
+        g.copyTo(G);
+    }
 
     float_t mu; // decay term
-private:
     float_t eps; // constant value to avoid zero-division
     UMat G;
+    String n;
 };

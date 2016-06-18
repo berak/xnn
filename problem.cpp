@@ -38,6 +38,7 @@ Mat deskew(const Mat &img)
     return res;
 }
 
+
 struct Numbers : Problem
 {
     const int ROWS = 1;
@@ -70,6 +71,7 @@ struct Numbers : Problem
     virtual Size outputSize() { return Size(ROWS,CLASSES); }
     virtual String desc() {return format("Numbers(%d,%d,%d)",ROWS,COLS,CLASSES);}
 };
+
 
 // https://cs231n.github.io/neural-networks-case-study/#linear
 struct Spiral : Problem
@@ -116,6 +118,7 @@ struct Spiral : Problem
     virtual Size outputSize() { return Size(1,3); }
     virtual String desc() {return "Spiral(2,3,1000)";}
 };
+
 
 struct Digits : Problem
 {
@@ -179,7 +182,7 @@ struct AttFaces : Problem
             Mat m = imread(fn, 0);
             if (m.empty())
             {
-                cout << "bad " << fn << endl;
+                cout << "bad image: " << fn << endl;
                 continue;
             }
             UMat um;
@@ -197,6 +200,7 @@ struct AttFaces : Problem
     virtual Size outputSize() { return Size(1,nPers); } 
     virtual String desc() {return format("AttFaces(%d,%d,%d))",pSiz,nPers,nImg);}
 };
+
 
 struct Tv10Faces : Problem
 {
@@ -239,6 +243,7 @@ struct Tv10Faces : Problem
     virtual Size outputSize() { return Size(1,nPers); } 
     virtual String desc() {return format("Tv10Faces(%d,%d,%d))",pSiz,nPers,nImg);}
 };
+
 
 struct MNist : Problem
 {
@@ -422,7 +427,7 @@ struct Cifar10: Problem
     virtual void test(int n, Volume &data, Volume &labels)  { batch(n, data, labels, false); }
     virtual void batch(int n, Volume &data, Volume &labels, bool training) 
     {
-        vector<Mat> &vec = training ? vec_train : vec_test;
+        vector<Mat>  &vec = training ? vec_train : vec_test;
         vector<char> &lab = training ? lab_train : lab_test;
         
         for (int i=0; i<n; i++)

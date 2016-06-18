@@ -51,7 +51,7 @@ struct LossSoftmax
         Scalar total = sum(prob);
         divide(prob, total[0], prob);
 
-        truth.convertTo(mask, CV_8U, 1.0/255);
+        truth.convertTo(mask, CV_8U, 0.1);//, 1.0/255);
         subtract(prob, -1, res, mask);
         return res;
     }
@@ -77,7 +77,7 @@ struct BaseWeights :  Layer
     String name;
     BaseWeights(String n="fully"): name(n) {}
 
-    virtual bool write(FileStorage &fs) 
+    virtual bool write(FileStorage &fs)
     {
         Mat w = weights.getMat(ACCESS_READ);
         Mat b = bias.getMat(ACCESS_READ);
@@ -88,7 +88,7 @@ struct BaseWeights :  Layer
         fs << "weight_init" << weight_init;
         return true;
     }
-    virtual bool read(const FileNode &fn) 
+    virtual bool read(const FileNode &fn)
     {
         Size siz;
         fn["size"] >> siz;
@@ -110,22 +110,27 @@ struct BaseWeights :  Layer
         weights_t = weights.t();
         fn["learn"] >> learn;
         return true;
-    }    
+    }
     virtual String type() { return name; }
     virtual String desc() { return format("%s(%d,%d,%1.3f,%1.3f)",name.c_str(), weights.cols, weights.rows, learn, weight_init); }
 };
 
 
 template <typename Optimizer, typename Loss>
-struct Fully : BaseWeights 
+struct Fully : BaseWeights
 {
     Optimizer optim_w, optim_b;
     Loss loss;
     Volume cache_up, cache_dn;
-    Fully(String n="fully"): BaseWeights(n) {}
 
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
-    {   
+    Fully(String n="fully")
+        : BaseWeights(n)
+        , optim_w("opt_w_")
+        , optim_b("opt_b_")
+    {}
+
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training)
+    {
         PROFILEX("fully_forward");
         //cerr << "fw " << upstream.size() << "  " << upstream[0].size() << " " << weights.size() << " " << bias.size() << endl;
         downstream.resize(upstream.size());
@@ -144,7 +149,7 @@ struct Fully : BaseWeights
     }
 
     virtual float backward(Volume &upstream, const Volume &downstream, bool training)
-    {   
+    {
         PROFILEX("fully_backward");
         upstream.resize(downstream.size());
         UMat grad(weights.size(), weights.type(), 0.0f);
@@ -157,20 +162,21 @@ struct Fully : BaseWeights
             gemm(dn, weights_t, 1, noArray(), 0, upstream[i]); // bias ?
             if (! training)
                 continue;
-            
+
             // residual = predicted - truth
             UMat pred = cache_dn[i];
             UMat res = loss(pred, dn);
-            
+
             // dx = c.t() * res;
             // grad += dx;
-            UMat c = col(cache_up[i]);
-            gemm(c, res, 1, grad, 1, grad);
-            
+            UMat dx, c = col(cache_up[i]);
+            gemm(c, res, 1, noArray(), 0, dx);
+            add(grad, dx, grad);
+
             // bias, too.
             UMat db;
-            reduce(res, db, 0, REDUCE_SUM);
-            add(gradB, gradB, db.reshape(1,db.total()));
+            reduce(dx, db, 0, REDUCE_SUM);
+            add(gradB, col(db), gradB);
         }
         if (training)
         {
@@ -183,6 +189,20 @@ struct Fully : BaseWeights
         return 0.0f;
     }
 
+    virtual bool write(FileStorage &fs)
+    {
+        BaseWeights::write(fs);
+        optim_w.write(fs);
+        optim_b.write(fs);
+        return true;
+    }
+    virtual bool read(const FileNode &fn)
+    {
+        BaseWeights::read(fn);
+        optim_w.read(fn);
+        optim_b.read(fn);
+        return true;
+    }
     virtual void show(String winName)
     {
         namedWindow(winName);
@@ -191,7 +211,7 @@ struct Fully : BaseWeights
 };
 
 template <typename Optimizer>
-struct Rnn : BaseWeights 
+struct Rnn : BaseWeights
 {
     Optimizer optim_w, optim_u;
     deque<UMat> past;
@@ -200,7 +220,14 @@ struct Rnn : BaseWeights
     UMat U, U_t;
     int hidden;
 
-    Rnn(String n="recurrent"): BaseWeights(n), hidden(3), act_fw(tanh2_fw), act_bw(tanh2_bw) {}
+    Rnn(String n="recurrent")
+        : BaseWeights(n)
+        , optim_w("opt_w_")
+        , optim_u("opt_u_")
+        , hidden(3)
+        , act_fw(tanh2_fw)
+        , act_bw(tanh2_bw)
+    {}
 
     static UMat signal(const UMat &W, const UMat &U, const UMat &x, const UMat &last, proc act)
     {
@@ -208,7 +235,6 @@ struct Rnn : BaseWeights
         // cerr << W.size() << " " << U.size() << " " << x.size() << " " << last.size() << " " ;
         UMat r;
         gemm(x, W, 1, noArray(), 0, r);
-        //cerr << r.size() << endl;
         if (! last.empty())
         {
             UMat r2;
@@ -217,9 +243,9 @@ struct Rnn : BaseWeights
         }
         return act(r);
     }
-    
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training) 
-    {   
+
+    virtual float forward(const Volume &upstream, Volume &downstream, bool training)
+    {
         PROFILEX("rnn_forward");
         downstream.resize(upstream.size());
         for (size_t i=0; i<upstream.size(); i++)
@@ -248,7 +274,7 @@ struct Rnn : BaseWeights
     }
 
     virtual float backward(Volume &upstream, const Volume &downstream, bool training)
-    {   
+    {
         //cerr << "bw " << downstream.size() << " " << training << endl;
         PROFILEX("rnn_backward");
         UMat grad, gradU;
@@ -267,20 +293,20 @@ struct Rnn : BaseWeights
             upstream[i] = up;
             if (! training)
                 continue;
-           
+
             // residual = predicted - truth
             UMat pred = cache_dn[i];
             UMat res;
             subtract(pred, dn, res);
-            
+
             // dx = c.t() * res;
             // grad += dx;
             gemm(col(cache_up[i]), res, 1, grad, 1, grad);
-                       
+
             UMat sig;
             gemm(dn, U_t, 1, noArray(), 0, sig);
             sig = act_bw(sig);
-           
+
             gemm(col(sig), pred, 1, gradU, 1, gradU);
         }
         if (! training)
@@ -300,15 +326,17 @@ struct Rnn : BaseWeights
         namedWindow(winName+"U");
         imshow(winName+"U",viz(U));
     }
-    virtual bool write(FileStorage &fs) 
+    virtual bool write(FileStorage &fs)
     {
         BaseWeights::write(fs);
         Mat u = U.getMat(ACCESS_READ);
         fs << "U" << u;
         fs << "hidden" << hidden;
+        optim_w.write(fs);
+        optim_u.write(fs);
         return true;
     }
-    virtual bool read(const FileNode &fn) 
+    virtual bool read(const FileNode &fn)
     {
         BaseWeights::read(fn);
         Mat u;
@@ -325,8 +353,10 @@ struct Rnn : BaseWeights
         int h=0;
         fn["hidden"] >> h;
         if (h>0) hidden=h;
+        optim_w.read(fn);
+        optim_u.read(fn);
         return true;
-    }    
+    }
     virtual String desc() { return format("%s %d(%d,%d),(%d,%d),(%1.3f,%1.3f)", name.c_str(), hidden, weights.cols, weights.rows, U.cols, U.rows, learn, weight_init); }
 };
 
@@ -337,7 +367,7 @@ struct Activation : Layer
     String _n;
     Activation(proc fw, proc bw, String n="chicken") : fw(fw), bw(bw), _n(n) {}
 
-    float pipe(const Volume &from, Volume &to, proc act) 
+    float pipe(const Volume &from, Volume &to, proc act)
     {
         to.resize(from.size());
         for (size_t i=0; i<from.size(); i++)  to[i] = act(from[i]);
@@ -368,7 +398,7 @@ struct Dropout : Layer
             return 0;
         }
         downstream.resize(upstream.size());
-        for (size_t i=0; i<upstream.size(); i++) 
+        for (size_t i=0; i<upstream.size(); i++)
             downstream[i] = dropout(upstream[i]);
         return 0;
     }
@@ -410,7 +440,7 @@ struct BatchNorm : Layer
         divide(m, from.size(), m);
 
         UMat v(from[0].size(), from[0].type(), 0.00000001f);
-        for (size_t i=0; i<from.size(); i++) 
+        for (size_t i=0; i<from.size(); i++)
         {
             UMat s;
             subtract(from[i], m, s);
@@ -418,7 +448,7 @@ struct BatchNorm : Layer
             add(v,s,v);
         }
         divide(v, from.size(), v);
-        for (size_t i=0; i<from.size(); i++) 
+        for (size_t i=0; i<from.size(); i++)
         {
             subtract(from[i], m, to[i]);
             divide(to[i], v, to[i]);
@@ -453,14 +483,14 @@ struct XNN : Network
     vector<Ptr<Layer>> layers;
     String name;
 
-    virtual String desc() 
-    { 
+    virtual String desc()
+    {
         String d=format("%s %d gens\r\n", name.c_str(), ngens);
         for (size_t i=0; i<layers.size(); i++)
         {
             d += layers[i]->desc() + "\r\n";
         }
-        return d; 
+        return d;
     }
     virtual float forward(const Volume &up, Volume &dn, bool training)
     {
@@ -494,7 +524,7 @@ struct XNN : Network
         if (!fs.isOpened())
         {
             clog << "could not save to " << fn << endl;
-            return false;            
+            return false;
         }
         fs << "layers" << "[";
         for (size_t i=0; i<layers.size(); i++)

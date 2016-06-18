@@ -4,7 +4,7 @@
   <_><type>recurrent</type>
      <hidden>3</hidden>
      <weight_init>0.0001</weight_init>
-  	 <learn>0.001</learn>
+     <learn>0.0005</learn>
      <size>225 900</size></_>
   <_><type>relu</type></_>
   <!--_><type>rnn</type>
@@ -14,7 +14,7 @@
      <size>225 225</size></_-->
   <!--_><type>dropout</type></_-->
   <!--_><type>relu</type></_-->
-  <_><type>softmax</type>
+  <_><type>softmax_mom</type>
      <weight_init>0.001</weight_init>
   	 <learn>0.0001</learn>
      <size>40 225</size></_>
