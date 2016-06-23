@@ -21,8 +21,8 @@ struct SGD
 struct momentum
 {
     UMat G;
-    double mu;
     String n;
+    double mu;
 
     momentum(String n="") : n(n), mu(0.9) {}
 
@@ -79,9 +79,9 @@ struct adagrad
     void write(FileStorage &fs) {}
     void read(const FileNode &fn) {}
 
-    float_t eps;
-    UMat G;
     String n;
+    UMat G;
+    float_t eps;
 };
 
 
@@ -117,8 +117,8 @@ struct RMSprop
         g.copyTo(G);
     }
 
+    String n;
     float_t mu; // decay term
     float_t eps; // constant value to avoid zero-division
     UMat G;
-    String n;
 };

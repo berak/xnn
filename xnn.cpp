@@ -11,6 +11,8 @@ using namespace std;
 namespace nn {
 namespace impl {
 
+int  DBGLEV = 0;
+
 
 typedef UMat (*proc)(const UMat &);
 
@@ -28,6 +30,48 @@ static UMat row(const UMat &m)
     return m.reshape(1, 1);
 }
 
+static UMat mse(const UMat &a, const UMat &b)
+{
+    PROFILEX("mse");
+    UMat c, res;
+    subtract(a, b, c);
+    multiply(c, c, res);
+    return res;
+}
+
+static UMat num_grad(const UMat &x, const UMat &W, float h=0.0001f)
+{
+    PROFILEX("num_grad");
+    UMat x1,x2, y1,y2, res;
+    UMat xr = row(x);
+    subtract(xr, h, x1);
+    subtract(xr,-h, x2);
+    gemm(x1, W, 1, noArray(), 0, y1);
+    gemm(x2, W, 1, noArray(), 0, y2);
+    subtract(y1, y2, res);
+    divide(res, 2 * h, res);
+    return res;
+}
+
+static double grad_check(const UMat &fa, const UMat &fn)
+{
+    PROFILEX("grad_check");
+    UMat pa;
+    reduce(fa, pa, 0, REDUCE_SUM);
+    double a = abs(norm(pa, NORM_L1));
+    double n = abs(norm(fn, NORM_L1));
+    if (a<=0 || n<=0) return -1;
+    double c = abs(norm(pa, fn, NORM_L1));
+    return c / max(a, n);
+}
+
+static UMat sqr(const UMat &a)
+{
+    PROFILEX("sqr");
+    UMat res;
+    multiply(a, a, res);
+    return res;
+}
 
 struct LossLinear
 {
@@ -35,7 +79,7 @@ struct LossLinear
     {
         PROFILEX("loss_linear");
         UMat res;
-        subtract(predicted,truth,res);
+        subtract(predicted, truth, res);
         return res;
     }
 };
@@ -51,7 +95,7 @@ struct LossSoftmax
         Scalar total = sum(prob);
         divide(prob, total[0], prob);
 
-        truth.convertTo(mask, CV_8U, 0.1);//, 1.0/255);
+        truth.convertTo(mask, CV_8U);//, 1.0/255);
         subtract(prob, -1, res, mask);
         return res;
     }
@@ -62,19 +106,18 @@ struct LossMseSqr
     UMat operator()(const UMat &predicted, const UMat &truth) const
     {
         PROFILEX("loss_mse");
-        UMat c,res;
-        subtract(row(predicted), row(truth), c);
-        multiply(c, c, res);
-        return res;
+        return mse(row(predicted), row(truth));
     }
 };
 
 
 struct BaseWeights :  Layer
 {
-    UMat weights, weights_t, bias;
+    UMat weights, weights_t, bias, grad, gradB, gradn;
+    Volume cache_up, cache_dn;
     float learn, weight_init;
     String name;
+
     BaseWeights(String n="fully"): name(n) {}
 
     virtual bool write(FileStorage &fs)
@@ -113,15 +156,27 @@ struct BaseWeights :  Layer
     }
     virtual String type() { return name; }
     virtual String desc() { return format("%s(%d,%d,%1.3f,%1.3f)",name.c_str(), weights.cols, weights.rows, learn, weight_init); }
+    double nrm(const UMat &m)
+    {
+        return sqrt(sum(sqr(weights))[0]);
+    }
+    String check()
+    {
+        double s1=nrm(weights);
+        double s2=nrm(grad) * learn;
+        double s3=nrm(bias);
+        double s4=nrm(gradB) * learn;
+        double err = grad_check(grad, gradn);
+        return format("W(%5.4f) dW(%5.4f) dW/W(%5.4f) B(%5.4f) dB(%5.4f) dB(%5.4f) err(%5.8f)", s1, s2, (s2/s1), s3, s4, err);
+    }
 };
 
 
 template <typename Optimizer, typename Loss>
-struct Fully : BaseWeights
+struct Fully : public BaseWeights
 {
     Optimizer optim_w, optim_b;
     Loss loss;
-    Volume cache_up, cache_dn;
 
     Fully(String n="fully")
         : BaseWeights(n)
@@ -129,10 +184,35 @@ struct Fully : BaseWeights
         , optim_b("opt_b_")
     {}
 
+
+    virtual bool write(FileStorage &fs)
+    {
+        BaseWeights::write(fs);
+        optim_w.write(fs);
+        optim_b.write(fs);
+        return true;
+    }
+
+    virtual bool read(const FileNode &fn)
+    {
+        BaseWeights::read(fn);
+        optim_w.read(fn);
+        optim_b.read(fn);
+        return true;
+    }
+
+    virtual void show(String winName)
+    {
+        cerr << name << " " << check() << endl;
+        namedWindow(winName);
+        imshow(winName,viz(weights));
+        namedWindow(winName+"_grad");
+        imshow(winName+"_grad",viz(grad));
+    }
     virtual float forward(const Volume &upstream, Volume &downstream, bool training)
     {
         PROFILEX("fully_forward");
-        //cerr << "fw " << upstream.size() << "  " << upstream[0].size() << " " << weights.size() << " " << bias.size() << endl;
+        if (DBGLEV) cerr << "fw " << upstream.size() << "  " << upstream[0].size() << " " << weights.size() << " " << bias.size() << endl;
         downstream.resize(upstream.size());
         for (size_t i=0; i<upstream.size(); i++)
         {
@@ -144,16 +224,35 @@ struct Fully : BaseWeights
         {
             cache_up = upstream;
             cache_dn = downstream;
+            gradn = num_grad(upstream[0], weights);
         }
         return 0;
     }
 
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
+    void update(const UMat &cache_u, const UMat &residual)
+    {
+        // dx = c.t() * res;
+        // grad += dx;
+        UMat dx, c = col(cache_u);
+        if (DBGLEV) cerr << "up " << c.size() << "  " << residual.size();
+
+        gemm(c, residual, 1, noArray(), 0, dx);
+        add(grad, dx, grad);
+        if (DBGLEV) cerr << " " << grad.size() << "  " << dx.size() << endl;
+
+        // bias, too.
+        UMat db;
+        reduce(dx, db, 0, REDUCE_SUM);
+        add(gradB, col(db), gradB);
+    }
+
+    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
     {
         PROFILEX("fully_backward");
+        if (DBGLEV) cerr << "bw " << downstream.size() << "  " << downstream[0].size() << " " << weights.size() << " " << bias.size() << " " << grad.size() << endl;
         upstream.resize(downstream.size());
-        UMat grad(weights.size(), weights.type(), 0.0f);
-        UMat gradB(bias.size(), bias.type(), 0.0f);
+        grad = UMat(weights.size(), weights.type(), 0.0f);
+        gradB = UMat(bias.size(), bias.type(), 0.0f);
         //#pragma omp parallel for
         for (size_t i=0; i<downstream.size(); i++)
         {
@@ -166,67 +265,39 @@ struct Fully : BaseWeights
             // residual = predicted - truth
             UMat pred = cache_dn[i];
             UMat res = loss(pred, dn);
-
-            // dx = c.t() * res;
-            // grad += dx;
-            UMat dx, c = col(cache_up[i]);
-            gemm(c, res, 1, noArray(), 0, dx);
-            add(grad, dx, grad);
-
-            // bias, too.
-            UMat db;
-            reduce(dx, db, 0, REDUCE_SUM);
-            add(gradB, col(db), gradB);
+            update(cache_up[i], res);
         }
         if (training)
         {
             // grad /= downstream.size();
             // weights -= grad * learn;
-            optim_w(grad, weights, learn/downstream.size());
-            optim_b(gradB, bias, learn/downstream.size());
+            float lrn = (globLearn > 0) ? globLearn : learn;
+            optim_w(grad, weights, lrn/downstream.size());
+            optim_b(gradB, bias, lrn/downstream.size());
             weights_t = weights.t();
         }
         return 0.0f;
     }
 
-    virtual bool write(FileStorage &fs)
-    {
-        BaseWeights::write(fs);
-        optim_w.write(fs);
-        optim_b.write(fs);
-        return true;
-    }
-    virtual bool read(const FileNode &fn)
-    {
-        BaseWeights::read(fn);
-        optim_w.read(fn);
-        optim_b.read(fn);
-        return true;
-    }
-    virtual void show(String winName)
-    {
-        namedWindow(winName);
-        imshow(winName,viz(weights));
-    }
 };
 
-template <typename Optimizer>
+template <typename Optimizer,typename Loss>
 struct Rnn : BaseWeights
 {
     Optimizer optim_w, optim_u;
+    Loss loss;
     deque<UMat> past;
-    Volume cache_up, cache_dn;
     proc act_fw, act_bw;
-    UMat U, U_t;
+    UMat U, U_t,gradU;
     int hidden;
 
     Rnn(String n="recurrent")
         : BaseWeights(n)
         , optim_w("opt_w_")
         , optim_u("opt_u_")
-        , hidden(3)
         , act_fw(tanh2_fw)
         , act_bw(tanh2_bw)
+        , hidden(3)
     {}
 
     static UMat signal(const UMat &W, const UMat &U, const UMat &x, const UMat &last, proc act)
@@ -252,6 +323,10 @@ struct Rnn : BaseWeights
         {
             // dn = up * weights + bias
             UMat up = upstream[i].reshape(1,1);
+            if (past.size() >= hidden)
+            {
+                past.pop_front();
+            }
             past.push_back(up);
             UMat dn; // empty for the most left(oldest)
             for (size_t h=0; h<past.size(); h++)
@@ -259,10 +334,6 @@ struct Rnn : BaseWeights
                 dn = signal(weights, U, past[h], dn, act_fw);
             }
             downstream[i] = dn;
-            if (past.size() >= hidden)
-            {
-                past.pop_front();
-            }
         }
         if (training)
         {
@@ -273,14 +344,23 @@ struct Rnn : BaseWeights
         return 0;
     }
 
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
+    void update(const UMat &cache_u, const UMat &residual)
+    {
+        // dx = c.t() * res;
+        // grad += dx;
+        UMat dx, c = col(cache_u);
+        gemm(c, residual, 1, noArray(), 0, dx);
+        add(grad, dx, grad);
+    }
+
+    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
     {
         //cerr << "bw " << downstream.size() << " " << training << endl;
         PROFILEX("rnn_backward");
-        UMat grad, gradU;
         if (training)
         {
             grad = UMat(weights.size(), weights.type(), 0.0f);
+            gradB = UMat(bias.size(), bias.type(), 0.0f);
             gradU = UMat(U.size(), U.type(), 0.0f);
         }
 
@@ -296,35 +376,56 @@ struct Rnn : BaseWeights
 
             // residual = predicted - truth
             UMat pred = cache_dn[i];
-            UMat res;
-            subtract(pred, dn, res);
+            UMat res = loss(pred, dn);
+            update(cache_up[i], res);
 
-            // dx = c.t() * res;
-            // grad += dx;
-            gemm(col(cache_up[i]), res, 1, grad, 1, grad);
+            UMat dU;
+            gemm(res, U_t, 1, noArray(), 0, dU);
+            for (size_t h=past.size()-1; h>0; h--)
+            {
+                UMat sig;
+                gemm(past[h], weights, 1, dU, 1, sig);
+                add(act_bw(sig), dU, dU);;
+            }
 
-            UMat sig;
-            gemm(dn, U_t, 1, noArray(), 0, sig);
-            sig = act_bw(sig);
-
-            gemm(col(sig), pred, 1, gradU, 1, gradU);
+            gemm(col(dU), pred, 1/hidden, gradU, 1, gradU);
         }
         if (! training)
             return 0.0f;
-        optim_w(grad, weights, learn/downstream.size());
-        weights_t = weights.t();
 
-        optim_u(gradU, U, learn/downstream.size());
+
+        // grad /= downstream.size();
+        // weights -= grad * learn;
+        float lrn = (globLearn > 0) ? globLearn : learn;
+        optim_w(grad, weights, lrn/downstream.size());
+        weights_t = weights.t();
+        optim_u(gradU, U, lrn/downstream.size());
         U_t = U.t();
+
         return 0.0f;
     }
 
+    String check()
+    {
+        double s1=nrm(U);
+        double s2=nrm(gradU) * learn;
+        String s = BaseWeights::check();
+        return s + format(" U(%5.4f) dU(%5.4f) dU/U(%5.4f)", s1,s2,(s2/s1));
+    }
     virtual void show(String winName)
     {
+        cerr << name << " " << check() << endl;
         namedWindow(winName);
         imshow(winName,viz(weights));
+        namedWindow(winName+"_g");
+        imshow(winName+"_g",viz(grad));
         namedWindow(winName+"U");
         imshow(winName+"U",viz(U));
+        namedWindow(winName+"dU");
+        imshow(winName+"dU",viz(gradU));
+        namedWindow(winName+"_dn");
+        size_t d(sqrt((double)cache_dn[0].total()));
+        imshow(winName+"_dn",viz(cache_dn,d));
     }
     virtual bool write(FileStorage &fs)
     {
@@ -378,7 +479,7 @@ struct Activation : Layer
     {
         return pipe(upstream, downstream, fw);
     }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
+    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
     {
         return pipe(downstream, upstream, bw);
     }
@@ -402,7 +503,7 @@ struct Dropout : Layer
             downstream[i] = dropout(upstream[i]);
         return 0;
     }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
+    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
     {
         upstream = downstream;
         return 0;
@@ -464,7 +565,7 @@ struct BatchNorm : Layer
         }
         return batch(upstream, downstream);
     }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training)
+    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
     {
         if (! training)
         {
@@ -504,7 +605,7 @@ struct XNN : Network
         dn = a;
         return 0;
     }
-    virtual float backward(Volume &up, const Volume &dn, bool training)
+    virtual float backward(Volume &up, const Volume &dn, bool training, float globLearn)
     {
         ngens ++;
         float e=0;
@@ -512,7 +613,7 @@ struct XNN : Network
         for (int i=int(layers.size())-1; i>=0; i--)
         {
             //cerr << "bw " << i << " " << layers[i]->desc() << " " << a.size() << " " << b.size() << " " << training << endl;
-            e = layers[i]->backward(a,b,training);
+            e = layers[i]->backward(a,b,training,globLearn);
             cv::swap(a,b);
         }
         up = b;
@@ -571,7 +672,7 @@ struct XNN : Network
             if (type=="softmax_mom") layer = makePtr<Fully<momentum, LossSoftmax>>("softmax_mom");
             if (type=="softmax_rms") layer = makePtr<Fully<RMSprop, LossSoftmax>>("softmax_rms");
             //if (type=="rbm")      layer = makePtr<RBM<SGD>>();
-            if (type=="recurrent")layer = makePtr<Rnn<SGD>>();
+            if (type=="recurrent")layer = makePtr<Rnn<SGD,LossLinear>>();
             if (layer.empty())
             {
                 CV_Error(0, format("unknown layer(%d): ", i) + type);
@@ -620,9 +721,11 @@ Mat viz(const Volume &v, int patchSize)
         int c = patchSize * (i % n);
         m.copyTo(draw(Rect(c,r,patchSize,patchSize)));
     }
+    if (draw.total() < 400*400)
+        resize(draw,draw, Size(400,400),-1,INTER_CUBIC);
     return draw;
 }
-Mat viz(const UMat &weights)
+Mat viz(const UMat &weights, float fac)
 {
     PROFILEX("viz_weights")
     int pn = (int)sqrt(double(weights.cols)) + 1;
@@ -631,11 +734,13 @@ Mat viz(const UMat &weights)
     for (int i=0; i<weights.cols; i++)
     {
         Mat f = weights.getMat(ACCESS_READ).col(i).clone().reshape(1,ps);
-        normalize(f, f, 1, 0, NORM_MINMAX);
+        normalize(f, f, fac, 0, NORM_MINMAX);
         int r = ps * int(i / pn);
         int c = ps * int(i % pn);
         f.copyTo(draw(Rect(c, r, ps, ps)));
     }
+    if (draw.total() < 400*400)
+        resize(draw,draw, Size(400,400),-1,INTER_CUBIC);
     return draw;
 }
 

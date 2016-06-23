@@ -22,8 +22,8 @@ struct Profile
         : name(name)
         , t(0)
         , c(0)
-        , d_tc(0)
         , d_t(0)
+        , d_tc(0)
     {}
 
     ~Profile()
@@ -41,7 +41,7 @@ struct Profile
 
         c ++;
         t += delta;
-        d_t  = double(t) / get_freq(); 
+        d_t  = double(t) / get_freq();
         d_tc = double(d_t)/c;
     }
 

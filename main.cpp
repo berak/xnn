@@ -55,8 +55,9 @@ int main(int argc, char **argv)
             "{ gen g          |1000 | number of train generations }"
             "{ report r       |50   | report frequency }"
             "{ batch b        |32   | train batch size }"
-            "{ loss l         |0.05 | stop training if loss is less }"
-            "{ problem p      |mnist| input problem(att,mnist,digits,numbers,tv10) }"
+            "{ loss L         |0.05 | stop training if loss is less }"
+            "{ learn l        |0.0001| global learning rate (overrides layer property) }"
+            "{ problem p      |mnist| input problem(eyes,att,cifar10,mnist,digits,numbers,spiral,tv10) }"
             "{ network n      |nn/mnist_3.xml| preconfigured network to load }"
             "{ save s         |my.xml| filename of saved trained model }"
             "{ visual v       |1    | show visuals in gui(or save to file) }"
@@ -76,6 +77,7 @@ int main(int argc, char **argv)
     int useOCL(parser.get<int>("ocl"));
     int batchSize(parser.get<int>("batch"));
     float minLoss(parser.get<float>("loss"));
+    float globLearn(parser.get<float>("learn"));
     bool visual(parser.get<int>("visual"));
     ocl::setUseOpenCL(useOCL);
     cout << "ocl " << cv::ocl::useOpenCL() << endl;
@@ -85,7 +87,7 @@ int main(int argc, char **argv)
 
     Ptr<Network> nn = nn::createNetwork(network);
     cout << nn->desc() << endl;
-    
+
     for (int g=1; g<=ngen; g++)
     {
         PROFILEX("generation")
@@ -97,9 +99,9 @@ int main(int argc, char **argv)
         {
             PROFILEX("train_pass")
             nn->forward(data, res, true);
-            nn->backward(res1, labels, true);
+            nn->backward(res1, labels, true, globLearn);
         }
-        
+
         if (g % report == 0)
         {
             PROFILEX("report")
@@ -118,31 +120,31 @@ int main(int argc, char **argv)
                 else
                 {
                     Mat gr = viz(data, problem->inputSize().width);
-                    gr.convertTo(gr,CV_8U,255); 
+                    gr.convertTo(gr,CV_8U,255);
                     imwrite("img/input.png", gr);
 
                     gr = viz(res1, problem->inputSize().width);
-                    gr.convertTo(gr,CV_8U,255); 
+                    gr.convertTo(gr,CV_8U,255);
                     imwrite("img/back.png", gr);
                 }
             }
             if (visual && waitKey(50)==27) return 0;
             if (loss_fw < minLoss) break;
         }
-    }  
+    }
 
     Volume data,predicted,labels,res1;
     problem->test(200, data, labels);
-   
+
     nn->forward(data, predicted, false);
     float loss_fw = loss(labels, predicted);
-    
+
     nn->backward(res1, labels, false);
     float loss_bw = loss(res1, data);
 
     float acc = accuracy(labels, predicted);
     cout << "final loss : " << loss_fw << " : " << loss_bw << " acc :  " << acc << endl;
-    
+
     nn->save(saveFile);
     return 0;
 }

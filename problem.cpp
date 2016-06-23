@@ -13,7 +13,7 @@ namespace impl {
 
 
 //
-// !! 
+// !!
 // some hardcoded paths to resources, fit to your needs !
 //
 String path_digits = "c:/data/img/digits.png";   // this is digits.png from opencv samples
@@ -21,6 +21,7 @@ String path_cifar  = "c:/data/cifar10";          // http://www.cs.toronto.edu/~k
 String path_mnist  = "c:/data/mnist";            // took it from tiny-cnn
 String path_att    = "c:/data/faces/att";        // std att-faces
 String path_tv10   = "c:/data/faces/tv10";       // my own set, probably has license issues.
+String path_eyes   = "c:/data/eyes";             // parnec.nuaa.edu.cn/xtan/data/datasets/dataset_B_Eye_Images.rar.
 //
 //
 
@@ -30,7 +31,7 @@ Mat deskew(const Mat &img)
     int SZ = img.rows;
     Moments m = moments(img);
     if (abs(m.mu02) < 1e-2)
-        return img; 
+        return img;
     double skew = m.mu11 / m.mu02;
     Mat_<float> M(2,3); M << 1, skew, -0.5*SZ*skew, 0, 1, 0;
     Mat res;
@@ -47,7 +48,7 @@ struct Numbers : Problem
 
     virtual void train(int n, Volume &data, Volume &labels) {batch(n,data,labels);}
     virtual void test(int n, Volume &data, Volume &labels) {batch(n,data,labels);}
-    virtual void batch(int n, Volume &data, Volume &labels) 
+    virtual void batch(int n, Volume &data, Volume &labels)
     {
         for (int i=0; i<n; i++)
         {
@@ -67,7 +68,7 @@ struct Numbers : Problem
             labels.push_back(lab);
         }
     }
-    virtual Size inputSize() { return Size(ROWS,COLS); } 
+    virtual Size inputSize() { return Size(ROWS,COLS); }
     virtual Size outputSize() { return Size(ROWS,CLASSES); }
     virtual String desc() {return format("Numbers(%d,%d,%d)",ROWS,COLS,CLASSES);}
 };
@@ -80,7 +81,7 @@ struct Spiral : Problem
     const int N=1000;
 
     UMat X, Y;
-    
+
     Spiral()
     {
         Mat x,y;
@@ -94,7 +95,7 @@ struct Spiral : Problem
         {
             float r = float(N)/(n);
             float t = k*4 + (k+1)*4*r + theRNG().uniform(0.0f, N*0.2f);
-            x.at<float>(ix,0) = r*sin(t); 
+            x.at<float>(ix,0) = r*sin(t);
             x.at<float>(ix,1) = r*cos(t);
             y.at<float>(ix,k) = 1.0f;
             ix++;
@@ -102,10 +103,10 @@ struct Spiral : Problem
         x.copyTo(X);
         y.copyTo(Y);
         cerr << X.size() << " " << Y.size() << endl;
-    } 
+    }
     virtual void train(int n, Volume &data, Volume &labels) {batch(n,data,labels, 0);}
     virtual void test(int n, Volume &data, Volume &labels) {batch(n,data,labels, N/2);}
-    virtual void batch(int n, Volume &data, Volume &labels, int offset) 
+    virtual void batch(int n, Volume &data, Volume &labels, int offset)
     {
         for (int i=0; i<n; i++)
         {
@@ -114,7 +115,7 @@ struct Spiral : Problem
             labels.push_back(Y.row(idx));
         }
     }
-    virtual Size inputSize() { return Size(1,2); } 
+    virtual Size inputSize() { return Size(1,2); }
     virtual Size outputSize() { return Size(1,3); }
     virtual String desc() {return "Spiral(2,3,1000)";}
 };
@@ -141,29 +142,75 @@ struct Digits : Problem
     }
     virtual void train(int n, Volume &data, Volume &labels) {batch(n,data,labels,0);}
     virtual void test(int n, Volume &data, Volume &labels) {batch(n,data,labels,50);}
-    virtual void batch(int n, Volume &data, Volume &labels, int off) 
+    virtual void batch(int n, Volume &data, Volume &labels, int off)
     {
         for (int i=0; i<n; i++)
         {
             PROFILEX("digi_img");
             int r = theRNG().uniform(0,50);
             int c = theRNG().uniform(0,50) + off;
-    
+
             UMat m;
             m = digi(Rect(c*SZ,r*SZ,SZ,SZ));
             data.push_back(m.clone());
-    
+
             UMat lab(1,10,CV_32F,0.0f);
             Mat l=lab.getMat(ACCESS_WRITE);
             l.at<float>(int(r/5)) = 1.0f;
             labels.push_back(lab);
         }
     }
-    virtual Size inputSize() { return Size(SZ,SZ); } 
-    virtual Size outputSize() { return Size(1,10); } 
+    virtual Size inputSize() { return Size(SZ,SZ); }
+    virtual Size outputSize() { return Size(1,10); }
     virtual String desc() {return format("Digits(%dx%d)",SZ,SZ);}
 };
 
+
+struct Eyes : Problem
+{
+    const int pSiz = 24;
+    const int nCls = 2;
+    const int nImg = 1112;
+    vector<String> op,cl;
+    Eyes()
+    {
+        glob(path_eyes + "/openLeftEyes/*.jpg", op);
+        glob(path_eyes + "/closedLeftEyes/*.jpg", cl);
+        cerr << "eyes " << cl.size() << " " << op.size() << " " << nImg << endl;
+        CV_Assert(cl.size() >= size_t(nImg) && op.size() >= size_t(nImg));
+        cl.resize(nImg);
+        op.resize(nImg);
+    }
+    virtual void train(int n, Volume &data, Volume &labels) {batch(n,data,labels,0);}
+    virtual void test(int n, Volume &data, Volume &labels) {batch(n,data,labels,nImg/2);}
+    virtual void batch(int n, Volume &data, Volume &labels, int off)
+    {
+        for (int i=0; i<n; i++)
+        {
+            int p = theRNG().uniform(0, nCls);
+            int n = theRNG().uniform(0, (nImg/2)) + off;
+            String fn = p  ? cl[n] : op[n];
+            Mat m = imread(fn, 0);
+            if (m.empty())
+            {
+                cout << "bad image: " << fn << endl;
+                continue;
+            }
+            UMat um;
+            resize(m,m,Size(pSiz,pSiz));
+            m.convertTo(um, CV_32F, 1.0/255.0);
+            data.push_back(um);
+
+            UMat lab(1,nCls,CV_32F,0.0f);
+            Mat l=lab.getMat(ACCESS_WRITE);
+            l.at<float>(p) = 1.0f;
+            labels.push_back(lab);
+        }
+    }
+    virtual Size inputSize() { return Size(pSiz,pSiz); }
+    virtual Size outputSize() { return Size(1,nCls); }
+    virtual String desc() {return format("Eyes(%d,%d,%d)",pSiz,nCls,nImg);}
+};
 
 struct AttFaces : Problem
 {
@@ -172,7 +219,7 @@ struct AttFaces : Problem
     const int nImg = 10;
     virtual void train(int n, Volume &data, Volume &labels) {batch(n,data,labels,0);}
     virtual void test(int n, Volume &data, Volume &labels) {batch(n,data,labels,5);}
-    virtual void batch(int n, Volume &data, Volume &labels, int off) 
+    virtual void batch(int n, Volume &data, Volume &labels, int off)
     {
         for (int i=0; i<n; i++)
         {
@@ -196,9 +243,9 @@ struct AttFaces : Problem
             labels.push_back(lab);
         }
     }
-    virtual Size inputSize() { return Size(pSiz,pSiz); } 
-    virtual Size outputSize() { return Size(1,nPers); } 
-    virtual String desc() {return format("AttFaces(%d,%d,%d))",pSiz,nPers,nImg);}
+    virtual Size inputSize() { return Size(pSiz,pSiz); }
+    virtual Size outputSize() { return Size(1,nPers); }
+    virtual String desc() {return format("AttFaces(%d,%d,%d)",pSiz,nPers,nImg);}
 };
 
 
@@ -215,7 +262,7 @@ struct Tv10Faces : Problem
     }
     virtual void train(int n, Volume &data, Volume &labels) {batch(n,data,labels,0);}
     virtual void test(int n, Volume &data, Volume &labels) {batch(n,data,labels,5);}
-    virtual void batch(int n, Volume &data, Volume &labels, int off) 
+    virtual void batch(int n, Volume &data, Volume &labels, int off)
     {
         for (int i=0; i<n; i++)
         {
@@ -227,7 +274,7 @@ struct Tv10Faces : Problem
             {
                 cout << "bad " << f << endl;
                 continue;
-            }   
+            }
             UMat um;
             resize(m,m,Size(pSiz,pSiz));
             m.convertTo(um, CV_32F, 1.0/255.0);
@@ -239,8 +286,8 @@ struct Tv10Faces : Problem
             labels.push_back(lab);
         }
     }
-    virtual Size inputSize() { return Size(pSiz,pSiz); } 
-    virtual Size outputSize() { return Size(1,nPers); } 
+    virtual Size inputSize() { return Size(pSiz,pSiz); }
+    virtual Size outputSize() { return Size(1,nPers); }
     virtual String desc() {return format("Tv10Faces(%d,%d,%d))",pSiz,nPers,nImg);}
 };
 
@@ -305,7 +352,7 @@ struct MNist : Problem
                 }
                 vec.push_back(deskew(tp));
             }
-        } 
+        }
         else clog << "bad input " << filename << endl;
     }
 
@@ -335,7 +382,7 @@ struct MNist : Problem
 
     virtual void train(int n, Volume &data, Volume &labels) { batch(n, data, labels, 0); }
     virtual void test(int n, Volume &data, Volume &labels)  { batch(n, data, labels, vec.size() / 2); }
-    virtual void batch(int n, Volume &data, Volume &labels, int off) 
+    virtual void batch(int n, Volume &data, Volume &labels, int off)
     {
         for (int i=0; i<n; i++)
         {
@@ -353,8 +400,8 @@ struct MNist : Problem
             labels.push_back(lbl);
         }
     }
-    virtual Size inputSize()  { return Size(28, 28); } 
-    virtual Size outputSize() { return Size(1, 10); } 
+    virtual Size inputSize()  { return Size(28, 28); }
+    virtual Size outputSize() { return Size(1, 10); }
     virtual String desc() { return format("MNist(%d,%d,%d))", 28, 10, vec.size());}
 };
 
@@ -388,7 +435,7 @@ struct Cifar10: Problem
         if (! file.is_open())
             CV_Error(0, String("could not open: ") + filename);
 
-        for (int i=0; i<10000; i++)     
+        for (int i=0; i<10000; i++)
         {
             char num;
             file.read((char*) &num, sizeof(char));
@@ -396,12 +443,12 @@ struct Cifar10: Problem
                 lab_train.push_back(num);
             else
                 lab_test.push_back(num);
-        
+
             char planes[3][1024];
             file.read((char*) &planes[0], 1024*sizeof(char));
             file.read((char*) &planes[1], 1024*sizeof(char));
             file.read((char*) &planes[2], 1024*sizeof(char));
-            
+
             Mat m;
             if (gray) // green only
             {
@@ -425,11 +472,11 @@ struct Cifar10: Problem
 
     virtual void train(int n, Volume &data, Volume &labels) { batch(n, data, labels, true); }
     virtual void test(int n, Volume &data, Volume &labels)  { batch(n, data, labels, false); }
-    virtual void batch(int n, Volume &data, Volume &labels, bool training) 
+    virtual void batch(int n, Volume &data, Volume &labels, bool training)
     {
         vector<Mat>  &vec = training ? vec_train : vec_test;
         vector<char> &lab = training ? lab_train : lab_test;
-        
+
         for (int i=0; i<n; i++)
         {
             int id = theRNG().uniform(0, vec.size());
@@ -446,8 +493,8 @@ struct Cifar10: Problem
             labels.push_back(lbl);
         }
     }
-    virtual Size inputSize()  { return Size(32, 32); } 
-    virtual Size outputSize() { return Size(1, 10); } 
+    virtual Size inputSize()  { return Size(32, 32); }
+    virtual Size outputSize() { return Size(1, 10); }
     virtual String desc() { return format("Cifar10(%d,%d,%d))", 32, 10, vec_train.size());}
 };
 
@@ -459,6 +506,7 @@ Ptr<Problem> createProblem(String name)
 {
     using namespace nn::impl;
     if (name=="tv10") return makePtr<impl::Tv10Faces>();
+    if (name=="eyes") return makePtr<impl::Eyes>();
     if (name=="att") return makePtr<impl::AttFaces>();
     if (name=="digits") return makePtr<impl::Digits>();
     if (name=="mnist") return makePtr<impl::MNist>();
@@ -467,6 +515,7 @@ Ptr<Problem> createProblem(String name)
     if (name=="numbers") return makePtr<impl::Numbers>();
     if (name=="spiral") return makePtr<impl::Spiral>();
     CV_Error(0, String("unknown problem: ") + name);
+    return Ptr<Problem>();
 }
 
 } // namespace nn
