@@ -43,6 +43,7 @@ float accuracy(const Volume &labels, const Volume &predicted)
     return float(ok) / predicted.size();
 }
 
+
 int main(int argc, char **argv)
 {
 

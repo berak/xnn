@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<layers>
+  <_><type>recurrent</type>
+     <learn>0.001</learn>
+     <weight_init>0.001</weight_init>
+     <size>400 1024</size></_>
+  <_><type>dropout</type></_>
+  <_><type>relu</type></_>
+  <_><type>recurrent</type>
+     <learn>0.001</learn>
+     <weight_init>0.0012</weight_init>
+     <size>144 400</size></_>
+  <_><type>dropout</type></_>
+  <_><type>relu</type></_>
+  <_><type>softmax_mom</type>
+     <weight_init>0.001</weight_init>
+     <learn>0.0001</learn>
+   <size>10 144</size></_>
+</layers>
+</opencv_storage>

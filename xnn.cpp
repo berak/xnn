@@ -69,7 +69,7 @@ static double grad_check(const UMat &fa, const UMat &fn)
     double n = norm(fn, nrm);
     if (a<eps || n<eps) return -1;
     double c = norm(pa, fn, nrm);
-    cerr << "gc " << a << " " << n << " " << c << " " << (c / max(a, n)) << endl;;
+    //cerr << "gc " << a << " " << n << " " << c << " " << (c / max(a, n)) << endl;;
     return c / max(a, n);
 }
 
@@ -211,7 +211,7 @@ struct Fully : public BaseWeights
 
     virtual void show(String winName)
     {
-        cerr << name << " " << check() << endl;
+        //cerr << name << " " << check() << endl;
         namedWindow(winName);
         imshow(winName,viz(weights));
         namedWindow(winName+"_grad");
@@ -426,7 +426,7 @@ struct Rnn : BaseWeights
     }
     virtual void show(String winName)
     {
-        cerr << name << " " << check() << endl;
+        //cerr << name << " " << check() << endl;
         namedWindow(winName);
         imshow(winName,viz(weights));
         namedWindow(winName+"_g");
@@ -435,9 +435,6 @@ struct Rnn : BaseWeights
         imshow(winName+"U",viz(U));
         namedWindow(winName+"dU");
         imshow(winName+"dU",viz(gradU));
-        namedWindow(winName+"_dn");
-        size_t d(sqrt((double)cache_dn[0].total()));
-        imshow(winName+"_dn",viz(cache_dn,d));
     }
     virtual bool write(FileStorage &fs)
     {
@@ -473,67 +470,6 @@ struct Rnn : BaseWeights
     virtual String desc() { return format("%s %d(%d,%d),(%d,%d),(%1.3f,%1.3f)", name.c_str(), hidden, weights.cols, weights.rows, U.cols, U.rows, learn, weight_init); }
 };
 
-struct Flatten : Layer
-{
-    String name;
-    int numInputs;
-    Size oldShape;
-    Flatten(String n="") : name(n), numInputs(1) {}
-    virtual bool write(FileStorage &fs)
-    {
-        fs << "numInputs" << numInputs;
-        return true;
-    }
-
-    virtual bool read(const FileNode &fn)
-    {
-        fn["numInputs"] >> numInputs;
-        return numInputs != 0;
-    }
-    virtual String type() {return name;}
-    virtual String desc() {return format("%s(%d)",name.c_str(),numInputs);}
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training)
-    {
-        PROFILEX("flat_forward");
-        if (DBGLEV) cerr << name << "_fw \t" << info(upstream);
-        downstream.clear();
-        for (size_t i=0; i<upstream.size(); i+=numInputs)
-        {
-            int x=0,y=0,w=upstream[i].cols, h=upstream[i].rows;
-            UMat flat(h*numInputs, w, upstream[i].type());
-            for (int p=0; p<numInputs; p++)
-            {
-                UMat up = upstream[i+p];
-                up.copyTo(flat(Rect(x,y,w,h)));
-                y += h;
-            }
-            oldShape = Size(w,h);
-            downstream.push_back(flat.reshape(1,1));
-        }
-        if (DBGLEV) cerr << " " << info(downstream) << endl;
-        return 0;
-    }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
-    {
-        PROFILEX("flat_backward");
-        if (DBGLEV) cerr << name << "_bw \t" << info(downstream) << " " << oldShape;
-
-        upstream.clear();
-        for (size_t i=0; i<downstream.size(); i++)
-        {
-            UMat dn = downstream[i].reshape(1,oldShape.height*numInputs);
-            Rect r(Point(),oldShape);
-            for (int j=0; j<numInputs; j++)
-            {
-                UMat u = dn(r);
-                r.y += oldShape.height;
-                upstream.push_back(u);
-            }
-        }
-        if (DBGLEV) cerr << " " << info(upstream) << endl;
-        return 0;
-    }
-};
 
 template <typename Optimizer,typename Loss>
 struct Conv : Layer
@@ -543,7 +479,7 @@ struct Conv : Layer
     int filterSize, numFilters;
     Optimizer optim_w, optim_u;
     Loss loss;
-    Volume filters, cache_up, cache_dn;
+    Volume filters, grads, cache_up, cache_dn;
 
     Conv(String n="conv")
         : name(n)
@@ -553,34 +489,6 @@ struct Conv : Layer
         , optim_u("opt_u_")
     {}
 
-
-    void forward(const UMat &up, Volume &downstream)
-    {
-        for (size_t i=0; i<filters.size(); i++)
-        {
-            UMat &f = filters[i];
-            UMat dn;
-            filter2D(up, dn, -1, f);
-            downstream.push_back(dn);
-        }
-    }
-    void backward(UMat &up, const Volume &downstream, int off)
-    {
-        //cout << "bw_1 " << info(downstream) << " " << off << endl;
-        UMat dn0 = downstream[0];
-        UMat usum(dn0.size(), dn0.type(), 0.0f);
-        for (size_t i=0; i<filters.size(); i++)
-        {
-            UMat d = downstream[off + i];
-            UMat f = filters[i].t();
-        //cerr << "bw_2 " << f.size() << "  " << d.size() << endl;
-            UMat u;
-            filter2D(d, u, -1, f);
-            add(u, usum, usum);
-        }
-        divide(usum, numFilters, usum);
-        up = usum;
-    }
     virtual float forward(const Volume &upstream, Volume &downstream, bool training)
     {
         PROFILEX("conv_forward");
@@ -588,7 +496,14 @@ struct Conv : Layer
         downstream.clear();
         for (size_t i=0; i<upstream.size(); i++)
         {
-            forward(upstream[i], downstream);
+            UMat up = upstream[i];
+            for (size_t j=0; j<filters.size(); j++)
+            {
+                UMat &f = filters[j];
+                UMat dn;
+                filter2D(up, dn, -1, f);
+                downstream.push_back(dn);
+            }
         }
         if (training)
         {
@@ -603,62 +518,63 @@ struct Conv : Layer
     {
         if (DBGLEV) cerr << name << "_bw \t" << info(downstream);
         PROFILEX("conv_backward");
-        /*if (training)
+
+        for (size_t i=0; training && i<filters.size(); i++)
         {
-            grad = UMat(weights.size(), weights.type(), 0.0f);
-            gradB = UMat(bias.size(), bias.type(), 0.0f);
-            gradU = UMat(U.size(), U.type(), 0.0f);
+            grads[i] = UMat(filters[0].size(), filters[0].type(), 0.0f);
         }
 
-        upstream.resize(downstream.size());
-        */
+
         upstream.clear();
         for (size_t k=0; k<downstream.size(); k+=numFilters)
         {
-            UMat up;
-            backward(up, downstream, k);
-            upstream.push_back(up);
-            if (! training)
-                continue;
-            /*
-            // residual = predicted - truth
-            UMat pred = cache_dn[i];
-            UMat res = loss(pred, dn);
-            update(cache_up[i], res);
-
-            UMat dU;
-            gemm(res, U_t, 1, noArray(), 0, dU);
-            for (size_t h=past.size()-1; h>0; h--)
+            //backward(up, downstream, k);
+            //cout << "bw_1 " << info(downstream) << " " << off << endl;
+            UMat dn0 = downstream[0];
+            UMat usum(dn0.size(), dn0.type(), 0.0f);
+            for (size_t i=0; i<filters.size(); i++)
             {
-                UMat sig;
-                gemm(past[h], weights, 1, dU, 1, sig);
-                add(act_bw(sig), dU, dU);;
-            }
+                UMat dn = downstream[k + i];
+                UMat ft = filters[i].t();
+                UMat u;
+                filter2D(dn, u, -1, ft);
+                add(u, usum, usum);
 
-            gemm(col(dU), pred, 1/hidden, gradU, 1, gradU);
-            */
+                if (! training) continue;
+
+                UMat pred = cache_dn[k + i];
+                UMat res  = loss(pred, dn);
+                // grad += dx;
+                UMat dx, ff = filters[i];//, c = col(cache_up[k/numFilters]);
+                //flip(filters[i],ff,0);
+                Point anchor(-1,-1);//ff.cols/2 - 1, ff.rows/2 - 1);
+                filter2D(ff, dx, -1, res, anchor, 0, BORDER_REFLECT);
+                // cerr << "*$$  " <<  dx.size() << endl;
+                //add(dx, grads[i], grads[i]);
+                gemm(ff.t(), dx, 1, grads[i], 1, grads[i]);
+            }
+            UMat up;
+            divide(usum, numFilters, up);
+            upstream.push_back(up);
         }
         if (DBGLEV) cerr << " " << info(upstream) << endl;
         if (! training)
             return 0.0f;
 
-        /*
-        // grad /= downstream.size();
-        // weights -= grad * learn;
-        float lrn = (globLearn > 0) ? globLearn : learn;
-        optim_w(grad, weights, lrn/downstream.size());
-        weights_t = weights.t();
-        optim_u(gradU, U, lrn/downstream.size());
-        U_t = U.t();
-        */
+        for (size_t i=0; i<filters.size(); i++)
+        {
+            scaleAdd(grads[i], -learn/downstream.size(), filters[i], filters[i]);
+        }
         return 0.0f;
     }
 
     virtual void show(String winName)
     {
-        cerr << desc() << endl;
+        //cerr << desc() << endl;
         namedWindow(winName);
         imshow(winName,viz(filters, filterSize));
+        namedWindow(winName+"_g");
+        imshow(winName+"_g",viz(grads, filterSize));
     }
     virtual bool write(FileStorage &fs)
     {
@@ -697,6 +613,7 @@ struct Conv : Layer
             {
                 UMat u = rand(filterSize, filterSize, weight_init);
                 filters.push_back(u);
+                grads.push_back(u);
             }
         }
         else
@@ -709,6 +626,7 @@ struct Conv : Layer
                 UMat um;
                 m.copyTo(um);
                 filters.push_back(um);
+                grads.push_back(um);
             }
             filterSize = filters[0].rows;
             numFilters = filters.size();
@@ -722,124 +640,7 @@ struct Conv : Layer
 };
 
 
-struct Activation : Layer
-{
-    proc fw,bw;
-    String _n;
-    Activation(proc fw, proc bw, String n="chicken") : fw(fw), bw(bw), _n(n) {}
-
-    float pipe(const Volume &from, Volume &to, proc act)
-    {
-        if (DBGLEV) cerr << _n << (act==fw?"_fw":"_bw") << " \t" << info(from);
-        to.resize(from.size());
-        for (size_t i=0; i<from.size(); i++)  to[i] = act(from[i]);
-        if (DBGLEV) cerr << " " << info(to) << endl;
-        return 0;
-    }
-
-    virtual float forward(const Volume &upstream, Volume &downstream, bool)
-    {
-        return pipe(upstream, downstream, fw);
-    }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
-    {
-        return pipe(downstream, upstream, bw);
-    }
-    virtual String type() {return _n;}
-    virtual String desc() {return _n;}
-};
-
-
-
-struct Dropout : Layer
-{
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training)
-    {
-        if (! training)
-        {
-            downstream = upstream;
-            return 0;
-        }
-        downstream.resize(upstream.size());
-        for (size_t i=0; i<upstream.size(); i++)
-            downstream[i] = dropout(upstream[i]);
-        return 0;
-    }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
-    {
-        upstream = downstream;
-        return 0;
-    }
-    virtual String type() { return "dropout"; }
-    virtual String desc() { return "dropout"; }
-};
-
-
-struct BatchNorm : Layer
-{
-    virtual float batch(const Volume &from, Volume &to)
-    {
-        PROFILEX("batchnorm")
-        to.resize(from.size());
-        /*// global
-        Scalar m,s, M, S;
-        for (size_t i=0; i<from.size(); i++)
-        {
-            meanStdDev(from[0], m, s);
-            M += m;
-            S += s;
-        }
-        M[0] /= from.size();
-        S[0] /= from.size();
-        for (size_t i=0; i<from.size(); i++)
-        {
-            subtract(from[0], M, to[i]);
-            divide(to[i], S[0]+0.0000001, to[i]);
-        }*/
-        // per pixel
-        UMat m(from[0].size(), from[0].type(), 0.0f);
-        for (size_t i=0; i<from.size(); i++)
-            add(from[i], m, m);
-        divide(m, from.size(), m);
-
-        UMat v(from[0].size(), from[0].type(), 0.00000001f);
-        for (size_t i=0; i<from.size(); i++)
-        {
-            UMat s;
-            subtract(from[i], m, s);
-            multiply(s,s,s);
-            add(v,s,v);
-        }
-        divide(v, from.size(), v);
-        for (size_t i=0; i<from.size(); i++)
-        {
-            subtract(from[i], m, to[i]);
-            divide(to[i], v, to[i]);
-        }
-        return 0;
-    }
-    virtual float forward(const Volume &upstream, Volume &downstream, bool training)
-    {
-        if (! training)
-        {
-            downstream = upstream;
-            return 0;
-        }
-        return batch(upstream, downstream);
-    }
-    virtual float backward(Volume &upstream, const Volume &downstream, bool training, float globLearn)
-    {
-        if (! training)
-        {
-            upstream = downstream;
-            return 0;
-        }
-        return batch(downstream, upstream);
-    }
-    virtual String type() { return "batchnorm"; }
-    virtual String desc() { return "batchnorm"; }
-};
-
+#include "layer.cpp"
 
 struct XNN : Network
 {
@@ -923,7 +724,9 @@ struct XNN : Network
             if (type=="tanh2")    layer = makePtr<Activation>(tanh2_fw,tanh2_bw,"tanh2");
             if (type=="mean")     layer = makePtr<Activation>(mean,mean,"mean");
             if (type=="minmax")   layer = makePtr<Activation>(minmax,minmax,"minmax");
-            if (type=="pool")     layer = makePtr<Activation>(poolavg_fw,poolavg_bw,"pool");
+            if (type=="pool22")   layer = makePtr<Activation>(poolavg22_fw,poolavg22_bw,"pool22");
+            if (type=="pool23")   layer = makePtr<Activation>(poolavg23_fw,poolavg23_bw,"pool23");
+            if (type=="pool33")   layer = makePtr<Activation>(poolavg33_fw,poolavg33_bw,"pool33");
             if (type=="dropout")  layer = makePtr<Dropout>();
             if (type=="batchnorm")layer = makePtr<BatchNorm>();
             if (type=="fully")    layer = makePtr<Fully<SGD, LossLinear>>("fully");
@@ -937,6 +740,7 @@ struct XNN : Network
             if (type=="conv")      layer = makePtr<Conv<SGD,LossLinear>>();
             //if (type=="rbm")      layer = makePtr<RBM<SGD>>();
             if (type=="recurrent")layer = makePtr<Rnn<SGD,LossLinear>>();
+            if (type=="visu")     layer = makePtr<Visu>();
             if (layer.empty())
             {
                 CV_Error(0, format("unknown layer(%d): ", i) + type);

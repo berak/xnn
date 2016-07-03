@@ -133,15 +133,18 @@ UMat softmax(const UMat &m)
     return prob;
 }
 
-UMat poolavg_fw(const UMat &m)
+UMat resize_(const UMat &m, double x, double y)
 {
     UMat p;
-    resize(m, p, Size(), 0.5, 0.5);
+    cv::resize(m, p, Size(), x, y);
     return p;
 }
-UMat poolavg_bw(const UMat &m)
-{
-    UMat p;
-    resize(m, p, Size(), 2, 2);
-    return p;
-}
+
+UMat poolavg22_fw(const UMat &m) { return resize_(m,0.5,0.5); }
+UMat poolavg22_bw(const UMat &m) { return resize_(m,2.0,2.0); }
+
+UMat poolavg23_fw(const UMat &m) { return resize_(m,0.5,0.3333); }
+UMat poolavg23_bw(const UMat &m) { return resize_(m,2.0,3.0); }
+
+UMat poolavg33_fw(const UMat &m) { return resize_(m,0.3333,0.3333); }
+UMat poolavg33_bw(const UMat &m) { return resize_(m,3.0,3.0); }

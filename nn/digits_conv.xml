@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<layers>
+  <_><type>conv</type>
+     <learn>0.0005</learn>
+     <numFilters>4</numFilters>
+     <filterSize>7</filterSize>
+     <weight_init>0.0001</weight_init></_>
+  <_><type>relu</type></_>
+  <_><type>visu</type></_>
+  <_><type>pool22</type></_>
+  <_><type>conv</type>
+     <learn>0.0005</learn>
+     <numFilters>4</numFilters>
+     <filterSize>11</filterSize>
+     <weight_init>0.0001</weight_init></_>
+  <_><type>relu</type></_>
+  <_><type>visu</type></_>
+  <_><type>pool22</type></_>
+  <_><type>flatten</type>
+     <numInputs>16</numInputs></_>
+  <_><type>softmax_mom</type>
+     <weight_init>0.0001</weight_init>
+     <learn>0.0005</learn>
+     <size>10 400</size></_>
+</layers>
+</opencv_storage>
