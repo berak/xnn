@@ -7,7 +7,7 @@ UMat minmax(const UMat &m)
 {
     PROFILE;
     normalize(m,m,1,0,NORM_MINMAX);
-    return m; 
+    return m;
 }
 UMat mean(const UMat &m)
 {
@@ -16,7 +16,7 @@ UMat mean(const UMat &m)
     meanStdDev(m, _m, _s);
     UMat res;
     subtract(m, _m, res);
-    return res; 
+    return res;
 }
 
 UMat relu(const UMat &m)
@@ -130,5 +130,18 @@ UMat softmax(const UMat &m)
     exp(prob, prob);
     Scalar total = sum(prob);
     divide(prob, total[0], prob);
-    return prob;  
+    return prob;
+}
+
+UMat poolavg_fw(const UMat &m)
+{
+    UMat p;
+    resize(m, p, Size(), 0.5, 0.5);
+    return p;
+}
+UMat poolavg_bw(const UMat &m)
+{
+    UMat p;
+    resize(m, p, Size(), 2, 2);
+    return p;
 }

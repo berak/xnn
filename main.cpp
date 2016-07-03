@@ -146,5 +146,6 @@ int main(int argc, char **argv)
     cout << "final loss : " << loss_fw << " : " << loss_bw << " acc :  " << acc << endl;
 
     nn->save(saveFile);
+    waitKey(5000);
     return 0;
 }
